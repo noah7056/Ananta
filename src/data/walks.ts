@@ -113,18 +113,18 @@ export const WALK_PLACES: WalkPlace[] = [
   {
     id: 'streets',
     text: 'Your neighbourhood',
-    journal: 'You walked the streets of {place}.',
+    journal: 'You walked the streets.',
   },
   {
     id: 'park',
     text: 'The park',
-    journal: 'You walked round the park in {place}.',
+    journal: 'You walked round the park.',
   },
   {
     id: 'market',
     text: 'The market',
     eventBias: 0.08,
-    journal: 'You walked through the market in {place}.',
+    journal: 'You walked through the market.',
   },
 
   // ancient world
@@ -133,14 +133,14 @@ export const WALK_PLACES: WalkPlace[] = [
     text: 'The forum',
     eras: ['ancient-world'],
     eventBias: 0.1,
-    journal: 'You walked the forum in {place}.',
+    journal: 'You walked the forum.',
   },
   {
     id: 'harbour',
     text: 'The harbour',
     eras: ['ancient-world'],
     eventBias: 0.06,
-    journal: 'You walked the harbour at {place}.',
+    journal: 'You walked the harbour.',
   },
   {
     id: 'forum-romanum',
@@ -156,14 +156,14 @@ export const WALK_PLACES: WalkPlace[] = [
     id: 'church',
     text: 'The church',
     eras: ['medieval'],
-    journal: 'You walked as far as the church in {place}.',
+    journal: 'You walked as far as the church.',
   },
   {
     id: 'fair',
     text: 'The fairground',
     eras: ['medieval'],
     eventBias: 0.12,
-    journal: 'You walked out to the fair at {place}.',
+    journal: 'You walked out to the fair.',
   },
 
   // age of sail
@@ -172,21 +172,21 @@ export const WALK_PLACES: WalkPlace[] = [
     text: 'The docks',
     eras: ['age-of-sail'],
     eventBias: 0.08,
-    journal: 'You walked the docks at {place}.',
+    journal: 'You walked the docks.',
   },
   {
     id: 'coffee-house',
     text: 'The coffee house',
     eras: ['age-of-sail'],
     eventBias: 0.06,
-    journal: 'You walked to the coffee house in {place}.',
+    journal: 'You walked to the coffee house.',
   },
   {
     id: 'canals',
     text: 'The canals',
     eras: ['age-of-sail'],
     places: ['netherlands-amsterdam'],
-    journal: 'You walked the canal ring in {place}.',
+    journal: 'You walked the canal ring.',
   },
   {
     id: 'osaka-water',
@@ -194,7 +194,7 @@ export const WALK_PLACES: WalkPlace[] = [
     eras: ['age-of-sail'],
     places: ['japan-osaka'],
     eventBias: 0.08,
-    journal: 'You walked the canals of {place}.',
+    journal: 'You walked the canals.',
   },
 
   // industrial
@@ -203,13 +203,13 @@ export const WALK_PLACES: WalkPlace[] = [
     text: 'The railway station',
     eras: ['industrial'],
     eventBias: 0.06,
-    journal: 'You walked as far as the station in {place}.',
+    journal: 'You walked as far as the station.',
   },
   {
     id: 'works',
     text: 'The factory district',
     eras: ['industrial'],
-    journal: 'You walked out past the works in {place}.',
+    journal: 'You walked out past the works.',
   },
 
   // atomic
@@ -218,7 +218,7 @@ export const WALK_PLACES: WalkPlace[] = [
     text: 'The cinema',
     eras: ['atomic'],
     eventBias: 0.08,
-    journal: 'You walked to the cinema in {place}.',
+    journal: 'You walked to the cinema.',
   },
   {
     id: 'dance-hall',
@@ -226,7 +226,7 @@ export const WALK_PLACES: WalkPlace[] = [
     eras: ['atomic'],
     minAge: 14,
     eventBias: 0.08,
-    journal: 'You walked to the dance hall in {place}.',
+    journal: 'You walked to the dance hall.',
   },
 
   // modern day
@@ -235,13 +235,13 @@ export const WALK_PLACES: WalkPlace[] = [
     text: 'The shopping centre',
     eras: ['modern-day'],
     eventBias: 0.08,
-    journal: 'You walked to the shopping centre in {place}.',
+    journal: 'You walked to the shopping centre.',
   },
   {
     id: 'riverside',
     text: 'The river path',
     eras: ['modern-day'],
-    journal: 'You walked the river path in {place}.',
+    journal: 'You walked the river path.',
   },
 
   // at war, in any period

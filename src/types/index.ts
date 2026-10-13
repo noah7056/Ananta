@@ -143,8 +143,53 @@ export interface Contact {
   married?: boolean;
   /** proposals refused; a second no breaks more often */
   proposalRefusals?: number;
+  /** times you refused to take them in; divorce grows likelier */
+  moveInRefusals?: number;
   /** 0–100: what they can put toward the house; rolled at meeting */
   wealth?: number;
+}
+
+/** Someone sharing your roof: a contact, a relative or a pet, by id. */
+export interface HomeResident {
+  scope: 'contact' | 'family' | 'pet';
+  id: string;
+  /** yearly rent they pay, if they are a tenant */
+  rent?: number;
+  /** leaseholder id, for companions who came with a tenant group */
+  group?: string;
+  /** noted against them: kicking out stings nobody but them */
+  cause?: boolean;
+}
+
+/** The house you own: what it is, who lives in it, what it owes. */
+export interface Home {
+  houseId: string;
+  residents: HomeResident[];
+  /** whether you live there yourself, or only own it */
+  movedIn: boolean;
+  /** tax owed in era currency, 0 when paid up */
+  taxOwed: number;
+  /** left open for tenants at the asked yearly rent */
+  forRent: boolean;
+  /** asking rent in era currency, for viewings and the open listing */
+  rentAsked: number;
+  /** the tenants now being sized up, if any */
+  viewing: Contact[];
+}
+
+/**
+ * Any further house you own: never lived in, only let, taxed and
+ * sold like the first. Tenants live in `tenants`, same shape as
+ * residents, leaseholders carrying the rent.
+ */
+export interface Rental {
+  uid: string;
+  houseId: string;
+  taxOwed: number;
+  forRent: boolean;
+  rentAsked: number;
+  viewing: Contact[];
+  tenants: HomeResident[];
 }
 
 /** One sickness instance. ownerId null = the character themselves. */
@@ -188,6 +233,14 @@ export interface Character {
   pregnancy: Pregnancy | null;
   /** item ids owned, in purchase order; duplicates allowed */
   belongings: string[];
+  /** the house you own, null while living with family or in lodgings */
+  home: Home | null;
+  /** further houses owned and let, never lived in */
+  rentals: Rental[];
+  /** people already asked to move in this year */
+  invitedThisYear: string[];
+  /** tenants sized up this year, refilled on each ageUp */
+  viewingsThisYear: number;
   /** 0–100: how fed you are. Falls yearly; empty means hunger. */
   satiety: number;
   /** 0–100: the house you were born into. Never shown, only hinted. */

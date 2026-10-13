@@ -196,7 +196,10 @@ events flow into the new era automatically. Add matching name pools in
 - **Career** is a yearly step in `engine/career.ts`: primary → middle →
   high school (each move announced in its own popup) → graduation → job
   offers → an interview → work → a roll for a raise each year you worked
-  hard. Offers always start at the bottom rung; climbing is by
+  hard. Schooling is historical: girls get primary only in the ancient
+  world and the age of sail, none in the middle ages, and full access
+  from industry on (one notice at 6, and leavers leave, they do not
+  graduate). Offers always start at the bottom rung; climbing is by
   promotion, and sharp hires climb fast. Standing (0–100) slips 3 a year and is pushed up by Study / Work
   harder. Career events queue behind the random event in the store's
   `pending`, and the job application chains its own popups through
@@ -302,7 +305,29 @@ events flow into the new era automatically. Add matching name pools in
   announced and treated at the doctor like you are, one cure at a time.
   A child's ask names something really on the shelves: fetching it
   opens the right shop on the right shelf, and buying it hands it
-  straight to them, with their reaction to follow.- **Salon & spa** (`src/data/salon.ts`) — one body-care menu whose
+  straight to them, with their reaction to follow.
+- **Homes** — you live with family (or lodgings) until you buy at 18+:
+  Belongings carries a Home block with a market per period, five rungs
+  from a room to an estate at realistic multiples of entry wages. Very
+  rich houses may buy a homeless adult a cottage some years. Ask friends
+  and relatives to move in (once each per year); whoever already lives
+  there gets a say, and objectors cool toward you. Parents and the whole
+  family can be asked together — but parents arriving without the young
+  ones ask to bring them, and leaving the kids costs everyone. Animals
+  move in one at a time, though attached kin may ask to keep them. A married spouse kept
+  out asks yearly — refuse and it costs closeness, with a divorce clock
+  that winds further every time. Lovers, kin and friends may ask you
+  back, at most one a year. Buying never moves you in: move when ready
+  (leaving the family home stings them), and the house view carries
+  worth, a residents roster, selling at your own price, a 2% yearly tax
+  (the collector comes the year after you forget), and tenants — sized
+  up at your rent, three viewings a year, or an open listing strangers
+  answer. Later houses are properties to let: tenants come singly or in
+  groups, can be turned out (free when they have given cause) or held
+  to a new rent, and every let roof has its own yearly doings — parties
+  and noise, charity asks and cuts, mended roofs and extra gifts — each
+  queued behind the rest.
+- **Salon & spa** (`src/data/salon.ts`) — one body-care menu whose
   chairs change with the period: oil massages and depilation in Rome,
   barber-surgeons and herbal baths in the middle ages, powdered wigs
   under sail, hot-towel shaves in the industrial age, manicures and sun

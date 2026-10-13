@@ -170,6 +170,7 @@ export function StartScreen() {
   const [nameDirty, setNameDirty] = useState(false);
   const [stats, setStats] = useState(rollStartingStats);
   const [money, setMoney] = useState(() => rollStartingMoney(ERAS[0].moneyScale));
+  const [showStats, setShowStats] = useState(false);
   const [editingFunds, setEditingFunds] = useState(false);
   const [fundsDraft, setFundsDraft] = useState('');
 
@@ -324,50 +325,62 @@ export function StartScreen() {
           </div>
         </div>
 
-        <h2 className={`${MS.label} mb-3`}>Stats</h2>
-        <div className={`${MS.panel} mb-12 px-5 py-3 sm:px-6`}>
-          {VITAL_KEYS.map((key) => (
-            <SliderRow
-              key={key}
-              label={cap(key)}
-              value={stats[key]}
-              display={String(stats[key])}
-              min={VITAL_MIN}
-              max={VITAL_MAX}
-              step={1}
-              onChange={(v) =>
-                setStats((s) => ({ ...s, [key]: clamp(v, VITAL_MIN, VITAL_MAX) }))
-              }
-            />
-          ))}
-          <SliderRow
-            label="Funds"
-            value={money}
-            display={
-              editingFunds ? (
-                <FundsInput
-                  draft={fundsDraft}
-                  onDraft={setFundsDraft}
-                  onCommit={commitFundsDraft}
-                  onCancel={() => setEditingFunds(false)}
-                />
-              ) : (
-                <span
-                  onDoubleClick={() => {
-                    setFundsDraft(String(money));
-                    setEditingFunds(true);
-                  }}
-                >
-                  {formatFunds(money, moneySymbolOf({ eraId, placeId }))}
-                </span>
-              )
-            }
-            min={FUNDS_MIN}
-            max={FUNDS_MAX}
-            step={moneyStep}
-            onChange={(v) => setMoney(clamp(v, FUNDS_MIN, FUNDS_MAX))}
-          />
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className={MS.label}>Stats</h2>
+          <button
+            onClick={() => setShowStats((v) => !v)}
+            aria-expanded={showStats}
+            className="text-sm text-ink-faint transition-colors hover:text-ink-dim"
+          >
+            {showStats ? 'Hide' : 'Show'}
+          </button>
         </div>
+        {showStats && (
+          <div className={`${MS.panel} mb-12 px-5 py-3 sm:px-6`}>
+            {VITAL_KEYS.map((key) => (
+              <SliderRow
+                key={key}
+                label={cap(key)}
+                value={stats[key]}
+                display={String(stats[key])}
+                min={VITAL_MIN}
+                max={VITAL_MAX}
+                step={1}
+                onChange={(v) =>
+                  setStats((s) => ({ ...s, [key]: clamp(v, VITAL_MIN, VITAL_MAX) }))
+                }
+              />
+            ))}
+            <SliderRow
+              label="Funds"
+              value={money}
+              display={
+                editingFunds ? (
+                  <FundsInput
+                    draft={fundsDraft}
+                    onDraft={setFundsDraft}
+                    onCommit={commitFundsDraft}
+                    onCancel={() => setEditingFunds(false)}
+                  />
+                ) : (
+                  <span
+                    onDoubleClick={() => {
+                      setFundsDraft(String(money));
+                      setEditingFunds(true);
+                    }}
+                  >
+                    {formatFunds(money, moneySymbolOf({ eraId, placeId }))}
+                  </span>
+                )
+              }
+              min={FUNDS_MIN}
+              max={FUNDS_MAX}
+              step={moneyStep}
+              onChange={(v) => setMoney(clamp(v, FUNDS_MIN, FUNDS_MAX))}
+            />
+          </div>
+        )}
+        {!showStats && <div className="mb-12" />}
 
         <div className="text-center">
           <button

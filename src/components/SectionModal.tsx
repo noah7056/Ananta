@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react';
 import { getEra, moneySymbolOf } from '../data/eras';
+import { housesFor, houseById, houseCost } from '../data/houses';
+import {
+  canInviteHome,
+  fairRent,
+  houseName,
+  isResident,
+  propHouseText,
+  propTenantLines,
+  propValue,
+  rentalByUid,
+  residenceLabel,
+  residentsOf,
+} from '../engine/houses';
 import { AILMENTS } from '../data/ailments';
 import { jobById, workStartAge, degreeById, degreesFor, degreeCost, UNI_NAMES } from '../data/career';
 import { formatFunds } from '../engine/life';
@@ -96,8 +109,13 @@ export function SectionModal({
   const [datingId, setDatingId] = useState<string | null>(null);
   const [huntSector, setHuntSector] = useState<string | null>(null);
   const [huntJob, setHuntJob] = useState<string | null>(null);
-  const [assetStep, setAssetStep] = useState<'list' | 'item' | 'gift' | 'drive'>('list');
+  const [assetStep, setAssetStep] = useState<'list' | 'item' | 'gift' | 'drive' | 'houses' | 'house' | 'mates' | 'sell' | 'rent'>('list');
   const [assetIdx, setAssetIdx] = useState<number | null>(null);
+  const [houseUid, setHouseUid] = useState<string | null>(null);
+  const houseProp =
+    assetStep === 'house' || assetStep === 'mates' || assetStep === 'sell' || assetStep === 'rent'
+      ? (houseUid ?? (character.home ? 'home' : null))
+      : null;
   const pendingBook = useGame((s) => s.pendingBook);
   const clearPendingBook = useGame((s) => s.clearPendingBook);
   // a book opened from an event lands on the reader once the popup closes
@@ -272,6 +290,11 @@ export function SectionModal({
           setStep={setAssetStep}
           selected={assetIdx}
           setSelected={setAssetIdx}
+          houseProp={houseProp}
+          onHouse={(prop) => {
+            setHouseUid(prop);
+            setAssetStep('house');
+          }}
         />
       )}
       {kind === 'work' && view === 'menu' && (
@@ -1684,6 +1707,7 @@ function FamilyBody({
 }) {
   const interactFamily = useGame((s) => s.interactFamily);
   const giftMoneyFamily = useGame((s) => s.giftMoneyFamily);
+  const inviteHome = useGame((s) => s.inviteHome);
   const askForMoney = useGame((s) => s.askForMoney);
   const askable = askableRelatives(character).map((m) => m.id);
   const symbol = moneySymbolOf(character);
@@ -1751,6 +1775,15 @@ function FamilyBody({
             Ask for pocket money
           </button>
         )}
+        {memberAge(member, character.age) >= 16 &&
+          canInviteHome(character, member, false) && (
+            <button
+              onClick={() => inviteHome('family', member.id)}
+              className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+            >
+              Ask to move in
+            </button>
+          )}
       </div>
       <button onClick={onBack} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
         Nevermind
@@ -2133,6 +2166,7 @@ function ContactBody({
   const flirt = useGame((s) => s.flirt);
   const makeLove = useGame((s) => s.makeLove);
   const askOut = useGame((s) => s.askOut);
+  const inviteHome = useGame((s) => s.inviteHome);
   const breakUp = useGame((s) => s.breakUp);
   const symbol = moneySymbolOf(character);
   const ref = cap(contactRef(contact));
@@ -2240,6 +2274,14 @@ function ContactBody({
             className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
           >
             Ask out
+          </button>
+        )}
+        {contact.kind !== 'pet' && canInviteHome(character, contact, true) && (
+          <button
+            onClick={() => inviteHome('contact', contact.id)}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+          >
+            Ask to move in
           </button>
         )}
         {canPropose(character, contact) && (
@@ -3296,17 +3338,576 @@ function ChildCureBlock({
   );
 }
 
+/**
+ * Where you live: your own roof and who shares it, or family and
+ * lodgings while you own nothing. The market opens from here, once
+ * you are grown.
+ */
+function HomeBlock({
+  character,
+  onMarket,
+  onHouse,
+}: {
+  character: Character;
+  onMarket: () => void;
+  onHouse: (prop: string) => void;
+}) {
+  const takeInPet = useGame((s) => s.takeInPet);
+  const inviteFamily = useGame((s) => s.inviteFamily);
+  const moveIn = useGame((s) => s.moveIn);
+  const owned = houseName(character);
+  const movedIn = character.home?.movedIn ?? false;
+  const residents = residentsOf(character);
+  const petsOut = character.contacts.filter(
+    (p) => p.kind === 'pet' && !isResident(character, 'pet', p.id),
+  );
+  const parentsOut = character.family.some(
+    (m) =>
+      (m.relation === 'mother' || m.relation === 'father') &&
+      !isResident(character, 'family', m.id),
+  );
+  const siblingsOut = character.family.some(
+    (m) =>
+      (m.relation === 'brother' || m.relation === 'sister') &&
+      memberAge(m, character.age) >= 16 &&
+      !isResident(character, 'family', m.id),
+  );
+  const familyOut = character.family.some(
+    (m) => !isResident(character, 'family', m.id),
+  );
+  return (
+    <div className="mb-4">
+      <div className={MS.label}>Home</div>
+      <div className="mt-1 text-[15px] font-semibold text-ink">
+        {movedIn && owned ? owned : residenceLabel(character)}
+      </div>
+      {owned && !movedIn && (
+        <div className="mt-0.5 text-[13px] text-ink-dim">
+          You own {owned.charAt(0).toLowerCase() + owned.slice(1)}.
+        </div>
+      )}
+      {residents.length > 0 && (
+        <div className="mt-1 divide-y divide-line">
+          {residents.map((r) => (
+            <div key={`${r.scope}:${r.id}`} className="py-2 text-left">
+              <div className="text-sm font-semibold text-ink">{cap(r.label)}</div>
+              <div className="mt-0.5 text-[13px] text-ink-dim">{r.sub}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {character.age >= 18 && (
+        <button
+          onClick={onMarket}
+          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+        >
+          Look for a house
+        </button>
+      )}
+      {owned && (
+        <button
+          onClick={() => onHouse('home')}
+          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+        >
+          House
+        </button>
+      )}
+      {owned && !movedIn && (
+        <button
+          onClick={() => moveIn('home')}
+          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+        >
+          Move in
+        </button>
+      )}
+      {(character.rentals ?? []).length > 0 && (
+        <>
+          <div className={`${MS.label} mt-4`}>Properties</div>
+          <div className="mt-1 divide-y divide-line">
+            {(character.rentals ?? []).map((r) => (
+              <button
+                key={r.uid}
+                onClick={() => onHouse(r.uid)}
+                className="block w-full py-2.5 text-left"
+              >
+                <div className="text-sm font-semibold text-ink">
+                  {propHouseText(character, r.uid) ?? 'A house'}
+                </div>
+                <div className="mt-0.5 text-[13px] text-ink-dim">
+                  {r.tenants.length > 0
+                    ? `Let${r.forRent ? ' · open' : ''}`
+                    : r.forRent
+                      ? 'Open for rent'
+                      : 'Standing empty'}
+                  {r.taxOwed > 0 && ' · tax due'}
+                </div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      {movedIn && parentsOut && (
+        <button
+          onClick={() => inviteFamily('parents')}
+          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+        >
+          Ask your parents
+        </button>
+      )}
+      {movedIn && siblingsOut && (
+        <button
+          onClick={() => inviteFamily('siblings')}
+          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+        >
+          Ask your siblings
+        </button>
+      )}
+      {movedIn && familyOut && (
+        <button
+          onClick={() => inviteFamily('all')}
+          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+        >
+          Ask the whole family
+        </button>
+      )}
+      {movedIn &&
+        petsOut.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => takeInPet(p.id)}
+            className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+          >
+            Take in {p.petName ?? p.name}
+          </button>
+        ))}
+    </div>
+  );
+}
+
+/** The market: every rung on offer in this period, cheap first. */
+function HouseMarketBody({
+  character,
+  onBack,
+}: {
+  character: Character;
+  onBack: () => void;
+}) {
+  const buyHome = useGame((s) => s.buyHome);
+  const houses = housesFor(character.eraId);
+  const symbol = moneySymbolOf(character);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const open = houses.find((h) => h.id === openId) ?? null;
+
+  if (open) {
+    const price = houseCost(open, character.eraId);
+    return (
+      <div>
+        <div className="flex items-baseline justify-between border-b border-line pb-3">
+          <span className="text-[15px] font-semibold text-ink">{open.text}</span>
+          <span className="text-[15px] font-semibold tabular-nums text-ink">
+            {formatFunds(price, symbol)}
+          </span>
+        </div>
+        <button
+          disabled={character.money < price}
+          onClick={() => buyHome(open.id)}
+          className={`${MS.primaryBtn} mt-4 w-full py-3 text-base disabled:cursor-not-allowed disabled:opacity-40`}
+        >
+          Buy
+        </button>
+        <button onClick={() => setOpenId(null)} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
+          Nevermind
+        </button>
+      </div>
+    );
+  }
+
+  if (houses.length === 0) {
+    return (
+      <div className={`${MS.ghostBtn} w-full cursor-not-allowed py-2.5 text-center text-[15px] opacity-40`}>
+        Nothing yet
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="space-y-2">
+        {houses.map((h) => (
+          <button
+            key={h.id}
+            onClick={() => setOpenId(h.id)}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+          >
+            {h.text} · {formatFunds(houseCost(h, character.eraId), symbol)}
+          </button>
+        ))}
+      </div>
+      <button onClick={onBack} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
+        Nevermind
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The house itself: what it is worth, what it owes, who is under
+ * its roof, and what can be done with it.
+ */
+function HouseBody({
+  character,
+  prop,
+  onResidents,
+  onSell,
+  onRent,
+  onBack,
+}: {
+  character: Character;
+  prop: string;
+  onResidents: () => void;
+  onSell: () => void;
+  onRent: () => void;
+  onBack: () => void;
+}) {
+  const moveIn = useGame((s) => s.moveIn);
+  const moveOut = useGame((s) => s.moveOut);
+  const payTax = useGame((s) => s.payTax);
+  const kickOut = useGame((s) => s.kickOut);
+  const name = propHouseText(character, prop);
+  const value = propValue(character, prop);
+  const lived = prop === 'home' && !!character.home?.movedIn;
+  const owed =
+    prop === 'home'
+      ? (character.home?.taxOwed ?? 0)
+      : (rentalByUid(character, prop)?.taxOwed ?? 0);
+  const tenants = propTenantLines(character, prop);
+  if (!name || value <= 0) {
+    return (
+      <button onClick={onBack} className={`${MS.ghostBtn} w-full py-2.5`}>
+        Nevermind
+      </button>
+    );
+  }
+  const symbol = moneySymbolOf(character);
+  const residents = prop === 'home' ? residentsOf(character) : [];
+  return (
+    <div>
+      <div className="flex items-baseline justify-between border-b border-line pb-3">
+        <span className={MS.label}>Worth</span>
+        <span className="text-[15px] font-semibold tabular-nums text-ink">
+          {formatFunds(value, symbol)}
+        </span>
+      </div>
+      <div className="mt-3 flex items-baseline justify-between border-b border-line pb-3">
+        <span className={MS.label}>Tax</span>
+        <span className="text-[15px] font-semibold tabular-nums text-ink">
+          {owed > 0 ? `Due ${formatFunds(owed, symbol)}` : 'Paid'}
+        </span>
+      </div>
+      {tenants.length > 0 && (
+        <>
+          <div className={`${MS.label} mt-4`}>Tenants</div>
+          <div className="mt-1 divide-y divide-line">
+            {tenants.map((t) => (
+              <div key={t.id} className="py-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-ink">{cap(t.name)}</div>
+                    <div className="mt-0.5 text-[13px] text-ink-dim">{t.sub}</div>
+                  </div>
+                  {!t.married && (
+                    <button
+                      onClick={() => kickOut(prop, t.id)}
+                      className={`${MS.ghostBtn} shrink-0 px-4 py-2.5 text-[15px]`}
+                    >
+                      Kick out
+                    </button>
+                  )}
+                </div>
+                <BondStrip value={t.bond} />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <div className="mt-4 space-y-2">
+        {owed > 0 && (
+          <button
+            onClick={() => payTax(prop)}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+          >
+            Pay the tax
+          </button>
+        )}
+        <button
+          onClick={onResidents}
+          className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+        >
+          Residents{residents.length > 0 ? ` (${residents.length})` : ''}
+        </button>
+        {prop === 'home' &&
+          (lived ? (
+            <button
+              onClick={() => moveOut()}
+              className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+            >
+              Move out
+            </button>
+          ) : (
+            <button
+              onClick={() => moveIn(prop)}
+              className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+            >
+              Move in
+            </button>
+          ))}
+        {prop !== 'home' && !character.home?.movedIn && (
+          <button
+            onClick={() => moveIn(prop)}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+          >
+            Move in
+          </button>
+        )}
+        <button
+          onClick={onSell}
+          className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+        >
+          Sell
+        </button>
+        <button
+          onClick={onRent}
+          className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+        >
+          Rent
+        </button>
+      </div>
+      <button onClick={onBack} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
+        Nevermind
+      </button>
+    </div>
+  );
+}
+
+/** Everyone under your roof, closeness and all, like a class list. */
+function MatesBody({
+  character,
+  prop,
+  onBack,
+}: {
+  character: Character;
+  prop: string;
+  onBack: () => void;
+}) {
+  const residents = prop === 'home' ? residentsOf(character) : [];
+  const tenants = prop === 'home' ? [] : propTenantLines(character, prop);
+  const bondOf = (scope: string, id: string): number => {
+    if (scope === 'family') {
+      return character.family.find((m) => m.id === id)?.bond ?? 0;
+    }
+    return character.contacts.find((m) => m.id === id)?.bond ?? 0;
+  };
+  return (
+    <div>
+      <div className={`${MS.label}`}>Residents</div>
+      <div className="mt-1 divide-y divide-line">
+        {residents.map((r) => (
+          <div key={`${r.scope}:${r.id}`} className="py-2.5 text-left">
+            <div className="text-sm font-semibold text-ink">{cap(r.label)}</div>
+            <div className="mt-0.5 text-[13px] text-ink-dim">{r.sub}</div>
+            <BondStrip value={bondOf(r.scope, r.id)} />
+          </div>
+        ))}
+        {tenants.map((t) => (
+          <div key={t.id} className="py-2.5 text-left">
+            <div className="text-sm font-semibold text-ink">{cap(t.name)}</div>
+            <div className="mt-0.5 text-[13px] text-ink-dim">{t.sub}</div>
+            <BondStrip value={t.bond} />
+          </div>
+        ))}
+      </div>
+      <button onClick={onBack} className={`${MS.ghostBtn} mt-3 w-full py-2.5`}>
+        Nevermind
+      </button>
+    </div>
+  );
+}
+
+/** Naming the price: under value they crowd in, over it they walk. */
+function SellBody({
+  character,
+  prop,
+  onBack,
+}: {
+  character: Character;
+  prop: string;
+  onBack: () => void;
+}) {
+  const sellHome = useGame((s) => s.sellHome);
+  const value = propValue(character, prop);
+  const symbol = moneySymbolOf(character);
+  const [pct, setPct] = useState(100);
+  if (value <= 0) {
+    return (
+      <button onClick={onBack} className={`${MS.ghostBtn} w-full py-2.5`}>
+        Nevermind
+      </button>
+    );
+  }
+  const price = Math.max(1, Math.round((value * pct) / 100));
+  return (
+    <div>
+      <div className="flex items-baseline justify-between border-b border-line pb-3">
+        <span className={MS.label}>Asking</span>
+        <span className="text-[15px] font-semibold tabular-nums text-ink">
+          {formatFunds(price, symbol)} · {pct}%
+        </span>
+      </div>
+      <input
+        type="range"
+        aria-label="Asking price"
+        min={50}
+        max={150}
+        step={5}
+        value={pct}
+        onChange={(e) => setPct(Number(e.target.value))}
+        className="mt-4 w-full"
+      />
+      <button
+        onClick={() => sellHome(prop, price)}
+        className={`${MS.primaryBtn} mt-4 w-full py-3 text-base`}
+      >
+        Sell
+      </button>
+      <button onClick={onBack} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
+        Nevermind
+      </button>
+    </div>
+  );
+}
+
+/** Letting the rooms: name the yearly rent, then find who pays it. */
+function RentBody({
+  character,
+  prop,
+  onBack,
+}: {
+  character: Character;
+  prop: string;
+  onBack: () => void;
+}) {
+  const findTenant = useGame((s) => s.findTenant);
+  const openRent = useGame((s) => s.openRent);
+  const closeRent = useGame((s) => s.closeRent);
+  const setRentPrice = useGame((s) => s.setRentPrice);
+  const symbol = moneySymbolOf(character);
+  const scale = getEra(character.eraId).moneyScale;
+  const fair = fairRent(character, prop);
+  const listed =
+    prop === 'home'
+      ? (character.home?.forRent ?? false)
+      : (rentalByUid(character, prop)?.forRent ?? false);
+  const tenants = propTenantLines(character, prop);
+  const [price, setPrice] = useState(Math.max(1, fair));
+  const [draft, setDraft] = useState(String(Math.max(1, fair)));
+  const commitDraft = () => {
+    const parsed = Number(draft);
+    if (Number.isFinite(parsed)) {
+      const next = Math.max(1, Math.floor(parsed));
+      setPrice(next);
+      setDraft(String(next));
+    } else {
+      setDraft(String(price));
+    }
+  };
+  const pick = (v: number) => {
+    const next = Math.max(1, Math.floor(v));
+    setPrice(next);
+    setDraft(String(next));
+  };
+  return (
+    <div>
+      <div className="flex items-baseline justify-between border-b border-line pb-3">
+        <span className={MS.label}>Usually</span>
+        <span className="text-[15px] font-semibold tabular-nums text-ink">
+          {formatFunds(fair, symbol)}/yr
+        </span>
+      </div>
+      <div className="mt-4 flex items-center gap-4">
+        <input
+          type="range"
+          aria-label="Yearly rent"
+          min={1}
+          max={Math.max(2, fair * 3)}
+          step={Math.max(1, scale)}
+          value={Math.min(price, Math.max(2, fair * 3))}
+          onChange={(e) => pick(Number(e.target.value))}
+          className="flex-1"
+        />
+        <input
+          type="number"
+          aria-label="Yearly rent amount"
+          min={1}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitDraft}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitDraft();
+          }}
+          className={`${MS.input} w-28 py-2.5 text-center text-[15px] font-semibold tabular-nums`}
+        />
+      </div>
+      <button
+        onClick={() => findTenant(price, prop)}
+        className={`${MS.primaryBtn} mt-4 w-full py-3 text-base`}
+      >
+        Find a tenant
+      </button>
+      {tenants.length > 0 && (
+        <button
+          onClick={() => setRentPrice(prop, price)}
+          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+        >
+          Change the rent
+        </button>
+      )}
+      {listed ? (
+        <button
+          onClick={() => closeRent(prop)}
+          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+        >
+          Close the listing
+        </button>
+      ) : (
+        <button
+          onClick={() => openRent(price, prop)}
+          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+        >
+          Leave open for rent
+        </button>
+      )}
+      <button onClick={onBack} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
+        Nevermind
+      </button>
+    </div>
+  );
+}
+
 function AssetsBody({  character,
   step,
   setStep,
   selected,
   setSelected,
+  houseProp,
+  onHouse,
 }: {
   character: Character;
-  step: 'list' | 'item' | 'gift' | 'drive';
-  setStep: (step: 'list' | 'item' | 'gift' | 'drive') => void;
+  step: 'list' | 'item' | 'gift' | 'drive' | 'houses' | 'house' | 'mates' | 'sell' | 'rent';
+  setStep: (step: 'list' | 'item' | 'gift' | 'drive' | 'houses' | 'house' | 'mates' | 'sell' | 'rent') => void;
   selected: number | null;
   setSelected: (idx: number | null) => void;
+  houseProp: string | null;
+  onHouse: (prop: string) => void;
 }) {
   const symbol = moneySymbolOf(character);
   const discardItem = useGame((s) => s.discardItem);
@@ -3382,6 +3983,35 @@ function AssetsBody({  character,
     );
   }
 
+  if (step === 'houses') {
+    return <HouseMarketBody character={character} onBack={() => setStep('list')} />;
+  }
+
+  if (step === 'house' && houseProp !== null) {
+    return (
+      <HouseBody
+        character={character}
+        prop={houseProp}
+        onResidents={() => setStep('mates')}
+        onSell={() => setStep('sell')}
+        onRent={() => setStep('rent')}
+        onBack={() => setStep('list')}
+      />
+    );
+  }
+
+  if (step === 'mates' && houseProp !== null) {
+    return <MatesBody character={character} prop={houseProp} onBack={() => setStep('house')} />;
+  }
+
+  if (step === 'sell' && houseProp !== null) {
+    return <SellBody character={character} prop={houseProp} onBack={() => setStep('house')} />;
+  }
+
+  if (step === 'rent' && houseProp !== null) {
+    return <RentBody character={character} prop={houseProp} onBack={() => setStep('house')} />;
+  }
+
   if (step === 'item' && selected !== null && currentItem) {
     return (
       <div>
@@ -3444,6 +4074,11 @@ function AssetsBody({  character,
 
   return (
     <div>
+      <HomeBlock
+        character={character}
+        onMarket={() => setStep('houses')}
+        onHouse={onHouse}
+      />
       <div className="flex items-baseline justify-between border-t border-line pt-3">
         <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-dim">
           Funds

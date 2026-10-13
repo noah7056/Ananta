@@ -74,6 +74,40 @@ import { salonCost, salonGain, salonsFor } from '../engine/salon';
 import { itemById, itemsFor, shopById, shopCost, isOwnedOut, giftRefusalChance, stapleFor, ownedEdibles, giftReaction, GIFT_BOND, GIFT_HAPPINESS, ringBonus, type GiftReaction } from '../engine/shopping';
 import { needsLicence, hasLicence, licenceAgeFor, licenceCost, canDrive, isVehicle, ownsVehicle, giftVehicleFor, LICENCE_FLAG } from '../engine/driving';
 import { WEDDING_VENUES, venuesFor, venueCost } from '../data/weddings';
+import { tenantEventsFor } from '../data/tenants';
+import { houseById, houseCost, housesFor } from '../data/houses';
+import {
+  askedEvent,
+  applyTenantNotice,
+  bumpTenant,
+  canInviteHome,
+  evictTenant,
+  fairRent,
+  giftHouseFor,
+  GIFT_CHANCE,
+  GIFT_WEALTH,
+  homeFlowStep,
+  inboundAskChance,
+  inviteChance,
+  isResident,
+  makeTenantGroup,
+  objectToNewcomer,
+  petKeepEvent,
+  propTenants,
+  rentalByUid,
+  sellChance,
+  setTenantRent,
+  sibsBringEvent,
+  spouseAskEvent,
+  sweepResidents,
+  taxAmount,
+  taxDueEvent,
+  tenantAcceptChance,
+  tenantAskEvent,
+  tenantChoiceEvent,
+  tenantLeaves,
+  viewingEvent,
+} from '../engine/houses';
 import { WARS, type WarDef } from '../data/wars';
 import { draftFor, draftEvent, warFlowStep, warYear, warYearEvent } from '../engine/wars';
 import {
@@ -313,6 +347,32 @@ interface GameState {
   takeDrive: (index: number, durationId: string, placeId: string, companion: string) => void;
   /** buy something from a shop; it lands in the belongings */
   takeShop: (itemId: string) => void;
+  /** buy a house on the market; the first is home, the rest to let */
+  buyHome: (houseId: string) => void;
+  /** ask a friend or a relative to live with you; they may not */
+  inviteHome: (scope: 'family' | 'contact', id: string) => void;
+  /** take one of your animals in; attached kin may ask to keep it */
+  takeInPet: (contactId: string) => void;
+  /** ask your parents, siblings — or the whole family — to live with you */
+  inviteFamily: (group: 'parents' | 'siblings' | 'all') => void;
+  /** move into the house you own, or a property of yours */
+  moveIn: (prop: string) => void;
+  /** move out of your house, back to family or lodgings */
+  moveOut: () => void;
+  /** sell a house or a property at your price; buyers may walk away */
+  sellHome: (prop: string, price: number) => void;
+  /** pay what the collector is owed on a property, even into debt */
+  payTax: (prop: string) => void;
+  /** size strangers up for a property's rooms at your price */
+  findTenant: (price: number, prop: string) => void;
+  /** leave a property's rooms open for tenants at your price */
+  openRent: (price: number, prop: string) => void;
+  /** take a property's rooms off the market */
+  closeRent: (prop: string) => void;
+  /** set a property's rent; tenants take it or leave over it */
+  setRentPrice: (prop: string, price: number) => void;
+  /** turn a tenant out, companions and all */
+  kickOut: (prop: string, contactId: string) => void;
   /** ask a grown-up at home to buy it for you; they may not */
   askForShop: (itemId: string, memberId: string) => void;
   /** throw a belonging away */
@@ -906,6 +966,29 @@ function loadSaved(): { character: Character; phase: Phase } | null {
     if (!Array.isArray((character as Character).stashedBelongings)) {
       (character as Character).stashedBelongings = [];
     }
+    if (!('home' in character) || (character as Character).home === undefined) {
+      (character as Character).home = null;
+    }
+    if (character.home && typeof character.home.movedIn !== 'boolean') {
+      // bought when moving in was automatic: they already live there
+      character.home = {
+        ...character.home,
+        movedIn: true,
+        taxOwed: 0,
+        forRent: false,
+        rentAsked: 0,
+        viewing: [],
+      };
+    }
+    if (!Array.isArray((character as Character).invitedThisYear)) {
+      (character as Character).invitedThisYear = [];
+    }
+    if (!Array.isArray((character as Character).rentals)) {
+      (character as Character).rentals = [];
+    }
+    if (typeof (character as Character).viewingsThisYear !== 'number') {
+      (character as Character).viewingsThisYear = 0;
+    }
     if (!('serving' in character) || (character as Character).serving === undefined) {
       (character as Character).serving = null;
     }
@@ -992,6 +1075,9 @@ export const useGame = create<GameState>((set, get) => ({
       children: [],
       pregnancy: null,
       belongings: [],
+      home: null,
+      rentals: [],
+      invitedThisYear: [],
       satiety: 80,
       familyWealth,
       destitute,
@@ -1037,6 +1123,7 @@ export const useGame = create<GameState>((set, get) => ({
       askedOutThisYear: [],
       datedThisYear: [],
       intimateThisYear: [],
+      viewingsThisYear: 0,
       classFor: null,
       classmates: [],
       crewFor: null,
@@ -1249,8 +1336,9 @@ export const useGame = create<GameState>((set, get) => ({
     }
 
     // No sickness may point at someone no longer around — dead, left,
-    // or grown and gone.
+    // or grown and gone. Neither may your roof: the gone move out.
     c = dropStrayAilments(c);
+    c = sweepResidents(c);
     // Children age whether or not the year took anyone.
     c = { ...c, children: driftChildren(c.children ?? []) };
 
@@ -1316,6 +1404,42 @@ export const useGame = create<GameState>((set, get) => ({
           kind: 'event',
         };
         c = { ...c, money: c.money - pay, log: [...c.log, entry] };
+      }
+    }
+
+    // Tenants pay their year: the comfortable always can, the poor
+    // sometimes cannot, and it cools things when they do not.
+    const earners: { id: string; rent: number }[] = [
+      ...(c.home?.residents ?? [])
+        .filter((r) => r.scope === 'contact' && (r.rent ?? 0) > 0)
+        .map((r) => ({ id: r.id, rent: r.rent ?? 0 })),
+      ...(c.rentals ?? []).flatMap((h) =>
+        h.tenants
+          .filter((r) => (r.rent ?? 0) > 0)
+          .map((r) => ({ id: r.id, rent: r.rent ?? 0 })),
+      ),
+    ];
+    for (const r of earners) {
+      const t = c.contacts.find((x) => x.id === r.id);
+      if (!t) continue;
+      if (Math.random() < Math.min(1, 0.5 + (t.wealth ?? 50) / 100)) {
+        c = { ...c, money: c.money + r.rent };
+      } else {
+        const entry: LogEntry = {
+          age: c.age,
+          year: c.birthYear + c.age,
+          text: `${t.name} could not pay the rent.`,
+          kind: 'event',
+        };
+        c = {
+          ...c,
+          contacts: c.contacts.map((x) =>
+            x.id === t.id
+              ? { ...x, bond: Math.max(0, Math.min(100, x.bond - 5)) }
+              : x,
+          ),
+          log: [...c.log, entry],
+        };
       }
     }
 
@@ -1486,6 +1610,49 @@ export const useGame = create<GameState>((set, get) => ({
             reputation: (c.stats.reputation ?? 50) + (gift.stats?.reputation ?? 0),
           }),
           belongings: [...(c.belongings ?? []), gift.id],
+          log: [...c.log, entry],
+        };
+      }
+    }
+
+    // Rich houses sometimes buy a grown child without a roof a modest one.
+    if (
+      !c.home &&
+      c.age >= 18 &&
+      !c.destitute &&
+      (c.familyWealth ?? 50) >= GIFT_WEALTH &&
+      askableRelatives(c).length > 0 &&
+      Math.random() < GIFT_CHANCE
+    ) {
+      const gift = giftHouseFor(c);
+      const giver = askableRelatives(c)[Math.floor(Math.random() * askableRelatives(c).length)];
+      if (gift && giver) {
+        const gidx = c.family.findIndex((m) => m.id === giver.id);
+        const ref = kinshipRef(giver, c.family);
+        const name = gift.text.charAt(0).toLowerCase() + gift.text.slice(1);
+        const family = [...c.family];
+        if (gidx >= 0) {
+          family[gidx] = { ...family[gidx]!, bond: clampPerformance(family[gidx]!.bond + 8) };
+        }
+        const entry: LogEntry = {
+          age: c.age,
+          year: c.birthYear + c.age,
+          text: `${cap(ref)} bought you ${name}.`,
+          kind: 'event',
+        };
+        c = {
+          ...c,
+          family,
+          home: {
+            houseId: gift.id,
+            residents: [],
+            movedIn: false,
+            taxOwed: 0,
+            forRent: false,
+            rentAsked: 0,
+            viewing: [],
+          },
+          stats: clampStats({ ...c.stats, happiness: c.stats.happiness + 6 }),
           log: [...c.log, entry],
         };
       }
@@ -1687,11 +1854,177 @@ export const useGame = create<GameState>((set, get) => ({
     if (askers.length > 0 && Math.random() < 0.35) {
       childAsk = childAskEvent(c, askers[Math.floor(Math.random() * askers.length)]!);
     }
+    // Dues on every roof: unpaid last year, the collector comes this year.
+    // Pay from the house view and no popup ever comes.
+    const taxEvents: LifeEvent[] = [];
+    if (c.home) {
+      if (c.home.taxOwed > 0) {
+        taxEvents.push(taxDueEvent(formatFunds(c.home.taxOwed, moneySymbolOf(c))));
+      } else {
+        const due = taxAmount(c, 'home');
+        if (due > 0) c = { ...c, home: { ...c.home, taxOwed: due } };
+      }
+    }
+    for (const rental of c.rentals ?? []) {
+      if (rental.taxOwed > 0) {
+        taxEvents.push(
+          taxDueEvent(formatFunds(rental.taxOwed, moneySymbolOf(c)), `rent-tax-${rental.uid}`),
+        );
+      } else {
+        const due = taxAmount(c, rental.uid);
+        if (due > 0) {
+          c = {
+            ...c,
+            rentals: (c.rentals ?? []).map((r) =>
+              r.uid === rental.uid ? { ...r, taxOwed: due } : r,
+            ),
+          };
+        }
+      }
+    }
+    // A spouse kept out of your house asks to be let in, every year apart.
+    let spouseAsk: LifeEvent | null = null;
+    if (c.home?.movedIn && !c.serving && !c.sentence) {
+      const apart = c.contacts.find(
+        (m) => m.kind === 'partner' && m.married && !isResident(c, 'contact', m.id),
+      );
+      if (apart) spouseAsk = spouseAskEvent(apart);
+    }
+    // Asked to take someone in: lovers first, then kin, then friends.
+    // Spouses ask their own way; the rest ask here, at most one a year.
+    let inboundAsk: LifeEvent | null = null;
+    if (c.home?.movedIn && !c.serving && !c.sentence && canActSocially(c)) {
+      const candidates: {
+        scope: 'contact' | 'family';
+        id: string;
+        isPartner: boolean;
+        label: string;
+      }[] = [];
+      for (const m of c.contacts) {
+        if (m.kind === 'pet') continue;
+        if (m.kind === 'partner' && m.married) continue;
+        if (contactAge(m, c.age) < 16) continue;
+        if (isResident(c, 'contact', m.id)) continue;
+        if ((c.invitedThisYear ?? []).includes(`contact:${m.id}`)) continue;
+        candidates.push({
+          scope: 'contact',
+          id: m.id,
+          isPartner: m.kind === 'partner',
+          label: contactRef(m),
+        });
+      }
+      for (const m of c.family) {
+        if (memberAge(m, c.age) < 16) continue;
+        if (isResident(c, 'family', m.id)) continue;
+        if ((c.invitedThisYear ?? []).includes(`family:${m.id}`)) continue;
+        candidates.push({
+          scope: 'family',
+          id: m.id,
+          isPartner: false,
+          label: kinshipRef(m, c.family),
+        });
+      }
+      candidates.sort((a, b) => {
+        const rank = (x: { isPartner: boolean; scope: string }) =>
+          x.isPartner ? 0 : x.scope === 'family' ? 1 : 2;
+        return rank(a) - rank(b);
+      });
+      for (const cand of candidates) {
+        const person =
+          cand.scope === 'contact'
+            ? c.contacts.find((x) => x.id === cand.id)
+            : c.family.find((x) => x.id === cand.id);
+        if (!person) continue;
+        if (
+          Math.random() <
+          inboundAskChance(c, person, cand.scope === 'contact')
+        ) {
+          inboundAsk = askedEvent(cand.scope, cand.label, cand.id, cand.isPartner);
+          break;
+        }
+      }
+    }
+    // An open listing may bring strangers to the door, at your price —
+    // the house first, then every open property behind it.
+    const tenantAsks: LifeEvent[] = [];
+    const openProps: string[] = [
+      ...(c.home?.forRent ? ['home'] : []),
+      ...(c.rentals ?? []).filter((r) => r.forRent).map((r) => r.uid),
+    ];
+    if (canActSocially(c)) {
+      for (const prop of openProps) {
+        if (tenantAsks.length > 0 && inboundAsk) break;
+        if (Math.random() < 0.25) {
+          const group = makeTenantGroup(c);
+          const asked =
+            prop === 'home' ? (c.home?.rentAsked ?? 0) : (rentalByUid(c, prop)?.rentAsked ?? 0);
+          const priceText = formatFunds(asked, moneySymbolOf(c));
+          if (prop === 'home' && c.home) {
+            c = { ...c, home: { ...c.home, viewing: group } };
+          } else {
+            c = {
+              ...c,
+              rentals: (c.rentals ?? []).map((r) =>
+                r.uid === prop ? { ...r, viewing: group } : r,
+              ),
+            };
+          }
+          tenantAsks.push(tenantAskEvent(c, prop, group, priceText));
+          if (inboundAsk) break;
+        }
+      }
+    }
+    // Tenants get up to things: every let roof rolls its own yearly
+    // doing, and each stages behind the rest.
+    const tenantEvents: LifeEvent[] = [];
+    if (!c.serving && !c.sentence) {
+      const letProps: string[] = [
+        ...(c.home &&
+        (c.home.residents ?? []).some((r) => r.scope === 'contact' && (r.rent ?? 0) > 0)
+          ? ['home']
+          : []),
+        ...(c.rentals ?? [])
+          .filter((r) => r.tenants.some((t) => (t.rent ?? 0) > 0))
+          .map((r) => r.uid),
+      ];
+      for (const prop of letProps) {
+        if (Math.random() >= 0.3) continue;
+        const leases = propTenants(c, prop).filter((e) => (e.rent ?? 0) > 0);
+        if (leases.length === 0) continue;
+        const lease = leases[Math.floor(Math.random() * leases.length)]!;
+        const defs = tenantEventsFor(c.eraId);
+        if (defs.length === 0) continue;
+        const def = defs[Math.floor(Math.random() * defs.length)]!;
+        if (def.choices.length === 0) {
+          const tname =
+            c.contacts.find((x) => x.id === lease.id)?.name ?? 'your tenant';
+          c = applyTenantNotice(c, prop, lease.id, def.key);
+          tenantEvents.push({
+            id: `home-tn-${def.key}|${prop}|${lease.id}`,
+            title: def.title,
+            description: def.describe(cap(tname)),
+            category: 'social',
+            conditions: {},
+            weight: 0,
+            choices: [],
+            effects: { journal: def.describe(cap(tname)) },
+          });
+        } else {
+          const staged = tenantChoiceEvent(c, prop, lease.id, def);
+          if (staged) tenantEvents.push(staged);
+        }
+      }
+    }
     // Career events wait behind this year's random event.
     const career = step.events;
     const queue: LifeEvent[] = [
       ...(picked ? [picked] : []),
       ...(childAsk ? [childAsk] : []),
+      ...(spouseAsk ? [spouseAsk] : []),
+      ...(inboundAsk ? [inboundAsk] : []),
+      ...tenantAsks,
+      ...taxEvents,
+      ...tenantEvents,
       ...career,
     ];
     if (queue.length === 0 && deathInfos.length === 0 && sickInfos.length === 0 && !debtInfo) {
@@ -1808,7 +2141,7 @@ export const useGame = create<GameState>((set, get) => ({
         choiceId,
         c,
         get().pendingJobId,
-      ) ?? loverFlowStep(activeEvent.event.id, choiceId, c) ?? warFlowStep(activeEvent.event.id, choiceId, c) ?? pregnancyFlowStep(activeEvent.event.id, choiceId, c) ?? childFlowStep(activeEvent.event.id, choiceId, c) ?? crimeFlowStep(activeEvent.event.id, choiceId, c);
+      ) ?? loverFlowStep(activeEvent.event.id, choiceId, c) ?? homeFlowStep(activeEvent.event.id, choiceId, c) ?? warFlowStep(activeEvent.event.id, choiceId, c) ?? pregnancyFlowStep(activeEvent.event.id, choiceId, c) ?? childFlowStep(activeEvent.event.id, choiceId, c) ?? crimeFlowStep(activeEvent.event.id, choiceId, c);
     if (flow) {
       const era = getEra(c.eraId);
       // flow.character carries the outcome (hired → jobId, rejected → not)
@@ -2357,9 +2690,14 @@ text: partingLine(me.name, me.kind),
     if (!canAfford(def, character.money, era.moneyScale)) return;
     const done = resolveAction(def, Math.random, 'school');
     const bumped: Classmate = { ...me, bond: clampPerformance(me.bond + done.bond) };
+    // course mates are not friends until befriended, and the tutor
+    // never is — so the journal names them plainly, never as a friend
+    const mateName = bumped.isTeacher
+      ? `your tutor ${bumped.name}`
+      : bumped.name;
     const fill = (t: string): string =>
       fillVariant(t, bumped, {
-        name: contactRef(bumped),
+        name: mateName,
         trade: bumped.status,
       });
     const entry: LogEntry = {
@@ -2760,14 +3098,18 @@ text: partingLine(me.name, me.kind),
     }
 
     // a partner is into you by definition; a friend depends on their
-    // tastes — the bisexual ones could go either way
+    // tastes — the bisexual ones could go either way. And even when
+    // they could be into you, closeness decides whether it lands.
     const theirs = me.orientation ?? 'straight';
-    let intoYou = me.kind === 'partner';
-    if (!intoYou) {
-      if (theirs === 'bisexual') intoYou = Math.random() < 0.5;
-      else if (theirs === 'gay') intoYou = character.gender === me.gender;
-      else intoYou = character.gender !== me.gender;
+    let attracted = me.kind === 'partner';
+    if (!attracted) {
+      if (theirs === 'bisexual') attracted = Math.random() < 0.5;
+      else if (theirs === 'gay') attracted = character.gender === me.gender;
+      else attracted = character.gender !== me.gender;
     }
+    const intoYou =
+      me.kind === 'partner' ||
+      (attracted && Math.random() < Math.min(0.9, 0.35 + me.bond / 200));
     const delta = intoYou
       ? Math.round(20 + me.bond / 5)
       : -Math.round(20 + (100 - me.bond) / 5);
@@ -2777,15 +3119,29 @@ text: partingLine(me.name, me.kind),
     };
     const contacts = [...character.contacts];
     contacts[idx] = moved;
+    const ref = contactRef(me);
+    const flirtLines =
+      me.kind === 'partner'
+        ? [
+            `You flirted with ${ref}.`,
+            `You made ${ref} laugh like before.`,
+            `You and ${ref} shared a look that lingered.`,
+          ]
+        : intoYou
+          ? [
+              `You flirted with ${ref}, and they flirted back.`,
+              `You made ${ref} laugh, and it meant something.`,
+              `You and ${ref} shared a look that lingered.`,
+            ]
+          : [
+              `You tried it on with ${ref}, and it fell flat.`,
+              `You flirted with ${ref}, and they looked away.`,
+              `You overplayed it with ${ref}.`,
+            ];
     const entry: LogEntry = {
       age: character.age,
       year: character.birthYear + character.age,
-      text:
-        me.kind === 'partner'
-          ? 'You flirted with your partner.'
-          : intoYou
-            ? 'You flirted, and it went well.'
-            : 'You flirted, and it went badly.',
+      text: flirtLines[Math.floor(Math.random() * flirtLines.length)],
       kind: 'event',
     };
     // flirting around behind a lover's back can get back to them.
@@ -2934,12 +3290,19 @@ text: partingLine(me.name, me.kind),
       marriedNo = true;
     }
 
+    const askLines = yes
+      ? [
+          `You asked ${me.name} to be yours, and they said yes.`,
+          `You asked, and ${me.name} said yes.`,
+        ]
+      : [
+          `You asked ${me.name} to be yours, and they said no.`,
+          `You asked, and ${me.name} said no.`,
+        ];
     const entry: LogEntry = {
       age: character.age,
       year: character.birthYear + character.age,
-      text: yes
-        ? 'You asked them to be yours, and they said yes.'
-        : 'You asked them to be yours, and they said no.',
+      text: askLines[Math.floor(Math.random() * askLines.length)],
       kind: 'event',
     };
     const kept: Contact =
@@ -3075,11 +3438,11 @@ text: partingLine(me.name, me.kind),
       text: me.married ? `You divorced ${me.name}.` : `You broke up with ${me.name}.`,
       kind: 'event',
     };
-    const c: Character = {
+    const c: Character = sweepResidents({
       ...character,
       contacts: character.contacts.filter((m) => m.id !== contactId),
       log: [...character.log, entry],
-    };
+    });
     const cleaned = dropStrayAilments(c);
     persist(cleaned, 'playing');
     set({
@@ -3420,9 +3783,14 @@ text: partingLine(me.name, me.kind),
     if (!canAfford(def, character.money, era.moneyScale)) return;
     const done = resolveAction(def, Math.random, 'school');
     const bumped: Classmate = { ...me, bond: clampPerformance(me.bond + done.bond) };
+    // classmates are not friends until befriended, and the teacher
+    // never is — so the journal names them plainly, never as a friend
+    const classmateName = bumped.isTeacher
+      ? `your teacher ${bumped.name}`
+      : bumped.name;
     const fill = (t: string): string =>
       fillVariant(t, bumped, {
-        name: contactRef(bumped),
+        name: classmateName,
         trade: bumped.status,
       });
     const entry: LogEntry = {
@@ -4612,6 +4980,868 @@ text: partingLine(me.name, me.kind),
       character: c,
       section: null,
       notice: { title: item.text, eyebrow: shop.text, text: item.notice },
+    });
+  },
+
+  buyHome: (houseId) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    if (character.home) return;
+    if (character.age < 18) return;
+    const house = houseById(character.eraId, houseId);
+    if (!house) return;
+    if (character.age < house.minAge) return;
+    if (!housesFor(character.eraId).some((h) => h.id === houseId)) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
+    const cost = houseCost(house, character.eraId);
+    if (character.money < cost) return;
+    const bought = house.text.charAt(0).toLowerCase() + house.text.slice(1);
+    const entry: LogEntry = {
+      age: character.age,
+      year: character.birthYear + character.age,
+      text: `You bought ${bought}.`,
+      kind: 'event',
+    };
+    const c: Character = character.home
+      ? {
+          ...character,
+          money: character.money - cost,
+          rentals: [
+            ...(character.rentals ?? []),
+            {
+              uid: `rent-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+              houseId: house.id,
+              taxOwed: 0,
+              forRent: false,
+              rentAsked: 0,
+              viewing: [],
+              tenants: [],
+            },
+          ],
+          stats: clampStats({ ...character.stats, happiness: character.stats.happiness + 6 }),
+          log: [...character.log, entry],
+        }
+      : {
+          ...character,
+          money: character.money - cost,
+          home: {
+            houseId: house.id,
+            residents: [],
+            movedIn: false,
+            taxOwed: 0,
+            forRent: false,
+            rentAsked: 0,
+            viewing: [],
+          },
+          stats: clampStats({ ...character.stats, happiness: character.stats.happiness + 6 }),
+          log: [...character.log, entry],
+        };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: {
+        title: house.text,
+        eyebrow: character.home ? 'To let' : 'Home',
+        text: character.home ? 'Yours to let.' : 'The keys are yours.',
+      },
+    });
+  },
+
+  moveIn: (prop) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    // homeless owners move; moving between roofs is not done.
+    if (character.home?.movedIn) return;
+    const houseId =
+      prop === 'home' ? character.home?.houseId : rentalByUid(character, prop)?.houseId;
+    if (!houseId) return;
+    const house = houseById(character.eraId, houseId);
+    const name = house ? house.text.charAt(0).toLowerCase() + house.text.slice(1) : 'your house';
+    const parents = character.family.filter(
+      (m) => m.relation === 'mother' || m.relation === 'father',
+    );
+    const family =
+      parents.length > 0
+        ? character.family.map((m) =>
+            m.relation === 'mother' || m.relation === 'father'
+              ? { ...m, bond: clampPerformance(m.bond - 5) }
+              : m,
+          )
+        : character.family;
+    const entry: LogEntry = {
+      age: character.age,
+      year: character.birthYear + character.age,
+      text:
+        parents.length > 0
+          ? 'You moved out of the family home.'
+          : `You moved into ${name}.`,
+      kind: 'event',
+    };
+    // a let property becomes the house, tenants and all; whatever
+    // stood as the house becomes a property in its place.
+    const rentals = (character.rentals ?? []).filter((r) => r.uid !== prop);
+    const demote =
+      character.home && prop !== 'home'
+        ? [
+            ...rentals,
+            {
+              uid: `rent-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+              houseId: character.home.houseId,
+              taxOwed: character.home.taxOwed,
+              forRent: false,
+              rentAsked: 0,
+              viewing: [],
+              tenants: character.home.residents.filter((r) => r.scope === 'contact'),
+            },
+          ]
+        : rentals;
+    const fromRental =
+      prop !== 'home' ? (character.rentals ?? []).find((r) => r.uid === prop) : null;
+    const home = fromRental
+      ? {
+          houseId: fromRental.houseId,
+          residents: fromRental.tenants,
+          movedIn: true,
+          taxOwed: fromRental.taxOwed,
+          forRent: false,
+          rentAsked: fromRental.rentAsked,
+          viewing: [],
+        }
+      : character.home
+        ? { ...character.home, movedIn: true, viewing: [] }
+        : null;
+    if (!home) return;
+    const c: Character = {
+      ...character,
+      family,
+      home,
+      rentals: demote,
+      stats: clampStats({ ...character.stats, happiness: character.stats.happiness + 2 }),
+      log: [...character.log, entry],
+    };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: { title: 'Moved in', eyebrow: 'Home', text: 'You live here now.' },
+    });
+  },
+
+  moveOut: () => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    if (!character.home?.movedIn) return;
+    const entry: LogEntry = {
+      age: character.age,
+      year: character.birthYear + character.age,
+      text: 'You moved out of your house.',
+      kind: 'event',
+    };
+    const c: Character = {
+      ...character,
+      home: { ...character.home, viewing: [] },
+      log: [...character.log, entry],
+    };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: { title: 'Moved out', eyebrow: 'Home', text: 'The house stands empty of you.' },
+    });
+  },
+
+  sellHome: (prop, price) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    const houseId =
+      prop === 'home' ? character.home?.houseId : rentalByUid(character, prop)?.houseId;
+    if (!houseId) return;
+    const house = houseById(character.eraId, houseId);
+    if (!house) return;
+    const value = houseCost(house, character.eraId);
+    const amount = Math.max(0, Math.floor(price));
+    const sold = Math.random() < sellChance(amount, value);
+    if (!sold) {
+      const entry: LogEntry = {
+        age: character.age,
+        year: character.birthYear + character.age,
+        text: 'No one met your price.',
+        kind: 'event',
+      };
+      const c: Character = { ...character, log: [...character.log, entry] };
+      persist(c, 'playing');
+      set({
+        character: c,
+        section: null,
+        notice: { title: 'No sale', eyebrow: house.text, text: 'No one met your price.' },
+      });
+      return;
+    }
+    const bought = house.text.charAt(0).toLowerCase() + house.text.slice(1);
+    const hadTenants =
+      prop === 'home'
+        ? (character.home?.residents ?? []).length > 0
+        : (rentalByUid(character, prop)?.tenants ?? []).length > 0;
+    const entry: LogEntry = {
+      age: character.age,
+      year: character.birthYear + character.age,
+      text: `You sold ${bought} for ${formatFunds(amount, moneySymbolOf(character))}.${hadTenants ? ' The tenants leave.' : ''}`,
+      kind: 'event',
+    };
+    const c: Character =
+      prop === 'home'
+        ? {
+            ...character,
+            money: character.money + amount,
+            home: null,
+            stats: clampStats({ ...character.stats, happiness: character.stats.happiness + 2 }),
+            log: [...character.log, entry],
+          }
+        : {
+            ...character,
+            money: character.money + amount,
+            rentals: (character.rentals ?? []).filter((r) => r.uid !== prop),
+            stats: clampStats({ ...character.stats, happiness: character.stats.happiness + 2 }),
+            log: [...character.log, entry],
+          };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: { title: 'Sold', eyebrow: house.text, text: entry.text },
+    });
+  },
+
+  payTax: (prop) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    const owed =
+      prop === 'home'
+        ? (character.home?.taxOwed ?? 0)
+        : (rentalByUid(character, prop)?.taxOwed ?? 0);
+    if (owed <= 0) return;
+    const entry: LogEntry = {
+      age: character.age,
+      year: character.birthYear + character.age,
+      text: 'You paid the tax.',
+      kind: 'event',
+    };
+    const c: Character =
+      prop === 'home' && character.home
+        ? {
+            ...character,
+            money: character.money - owed,
+            home: { ...character.home, taxOwed: 0 },
+            log: [...character.log, entry],
+          }
+        : {
+            ...character,
+            money: character.money - owed,
+            rentals: (character.rentals ?? []).map((r) =>
+              r.uid === prop ? { ...r, taxOwed: 0 } : r,
+            ),
+            log: [...character.log, entry],
+          };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: { title: 'Paid', eyebrow: 'Tax', text: 'The book is marked.' },
+    });
+  },
+
+  findTenant: (price, prop) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    if (prop === 'home' ? !character.home : !rentalByUid(character, prop)) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
+    const amount = Math.max(1, Math.floor(price));
+    const group = makeTenantGroup(character);
+    const priceText = formatFunds(amount, moneySymbolOf(character));
+    let c: Character = {
+      ...character,
+      viewingsThisYear: (character.viewingsThisYear ?? 0) + 1,
+    };
+    if (prop === 'home' && c.home) {
+      c = { ...c, home: { ...c.home, rentAsked: amount, viewing: group } };
+    } else {
+      c = {
+        ...c,
+        rentals: c.rentals.map((r) =>
+          r.uid === prop ? { ...r, rentAsked: amount, viewing: group } : r,
+        ),
+      };
+    }
+    const era = getEra(c.eraId);
+    const staged = stageEvent(c, viewingEvent(c, prop, group, priceText), era.moneyScale);
+    persist(staged.character, 'playing');
+    set({
+      character: staged.character,
+      section: null,
+      notice: null,
+      activeEvent: staged.activeEvent,
+      mustChoose: staged.activeEvent.event.choices.length > 0,
+    });
+  },
+
+  openRent: (price, prop) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    const already =
+      prop === 'home'
+        ? !character.home || character.home.forRent
+        : !rentalByUid(character, prop) || rentalByUid(character, prop)?.forRent;
+    if (already) return;
+    const amount = Math.max(1, Math.floor(price));
+    const entry: LogEntry = {
+      age: character.age,
+      year: character.birthYear + character.age,
+      text: 'You put the rooms up for rent.',
+      kind: 'event',
+    };
+    const c: Character =
+      prop === 'home' && character.home
+        ? {
+            ...character,
+            home: { ...character.home, forRent: true, rentAsked: amount },
+            log: [...character.log, entry],
+          }
+        : {
+            ...character,
+            rentals: (character.rentals ?? []).map((r) =>
+              r.uid === prop ? { ...r, forRent: true, rentAsked: amount } : r,
+            ),
+            log: [...character.log, entry],
+          };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: { title: 'To let', eyebrow: 'Home', text: 'Word gets round.' },
+    });
+  },
+
+  closeRent: (prop) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    const open =
+      prop === 'home'
+        ? character.home?.forRent
+        : rentalByUid(character, prop)?.forRent;
+    if (!open) return;
+    const entry: LogEntry = {
+      age: character.age,
+      year: character.birthYear + character.age,
+      text: 'You took the rooms off the market.',
+      kind: 'event',
+    };
+    const c: Character =
+      prop === 'home' && character.home
+        ? {
+            ...character,
+            home: { ...character.home, forRent: false, viewing: [] },
+            log: [...character.log, entry],
+          }
+        : {
+            ...character,
+            rentals: (character.rentals ?? []).map((r) =>
+              r.uid === prop ? { ...r, forRent: false, viewing: [] } : r,
+            ),
+            log: [...character.log, entry],
+          };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: { title: 'Closed', eyebrow: 'Home', text: 'No more strangers at the door.' },
+    });
+  },
+
+  setRentPrice: (prop, price) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    const exists =
+      prop === 'home' ? !!character.home : !!rentalByUid(character, prop);
+    if (!exists) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
+    const amount = Math.max(1, Math.floor(price));
+    const stamp = (text: string): LogEntry => ({
+      age: character.age,
+      year: character.birthYear + character.age,
+      text,
+      kind: 'event',
+    });
+    const old =
+      prop === 'home'
+        ? (character.home?.rentAsked ?? 0)
+        : (rentalByUid(character, prop)?.rentAsked ?? 0);
+    const leases = propTenants(character, prop).filter((e) => (e.rent ?? 0) > 0);
+    let c: Character =
+      prop === 'home' && character.home
+        ? {
+            ...character,
+            home: {
+              ...character.home,
+              rentAsked: amount,
+              residents: character.home.residents.map((e) =>
+                (e.rent ?? 0) > 0 ? { ...e, rent: amount } : e,
+              ),
+            },
+          }
+        : {
+            ...character,
+            rentals: (character.rentals ?? []).map((r) =>
+              r.uid === prop
+                ? {
+                    ...r,
+                    rentAsked: amount,
+                    tenants: r.tenants.map((e) =>
+                      (e.rent ?? 0) > 0 ? { ...e, rent: amount } : e,
+                    ),
+                  }
+                : r,
+            ),
+          };
+    const lines: string[] = [];
+    const fair = fairRent(c, prop);
+    for (const lease of leases) {
+      if (amount <= old) {
+        const bumped = bumpTenant(c, prop, lease.id, 3);
+        c = bumped.character;
+        lines.push(...bumped.lines);
+        continue;
+      }
+      const contact = c.contacts.find((x) => x.id === lease.id);
+      const stayed =
+        contact &&
+        Math.random() < tenantAcceptChance(contact.wealth ?? 50, amount, fair);
+      if (stayed) {
+        const bumped = bumpTenant(c, prop, lease.id, -3);
+        c = bumped.character;
+        lines.push(...bumped.lines);
+      } else {
+        const gone = tenantLeaves(
+          c,
+          prop,
+          lease.id,
+          8,
+          `${cap(contactRef(contact!))} moved out rather than pay it.`,
+        );
+        c = gone.character;
+        lines.push(...gone.lines);
+      }
+    }
+    c = {
+      ...c,
+      stats: clampStats({ ...c.stats, happiness: c.stats.happiness + (amount <= old ? 1 : 0) }),
+      log: [
+        ...c.log,
+        stamp(`You set the rent at ${formatFunds(amount, moneySymbolOf(c))}.`),
+        ...lines.map((t) => stamp(t)),
+      ],
+    };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: {
+        title: 'Let',
+        eyebrow: 'Rent',
+        text:
+          lines.length > 0
+            ? lines[0]!
+            : amount <= old
+              ? 'They take the news well.'
+              : 'They grumble, and stay.',
+      },
+    });
+  },
+
+  kickOut: (prop, contactId) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
+    const tenant = propTenants(character, prop).find(
+      (e) => e.id === contactId && (e.rent ?? 0) > 0,
+    );
+    const contact = character.contacts.find((m) => m.id === contactId);
+    if (!tenant || !contact) return;
+    if (contact.kind === 'partner' && contact.married) {
+      set({
+        section: null,
+        notice: { title: 'Married', text: 'That takes a divorce, not a notice.' },
+      });
+      return;
+    }
+    const out = evictTenant(character, prop, contactId, tenant.cause ?? false);
+    const stamp = (text: string): LogEntry => ({
+      age: character.age,
+      year: character.birthYear + character.age,
+      text,
+      kind: 'event',
+    });
+    const c: Character = {
+      ...out.character,
+      log: [...out.character.log, ...out.lines.map((t) => stamp(t))],
+    };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: { title: 'Out', eyebrow: cap(contactRef(contact)), text: out.lines[0] ?? 'Gone.' },
+    });
+  },
+
+  inviteHome: (scope, id) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    if (!character.home?.movedIn) return;
+    if (!canActSocially(character)) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
+    const key = `${scope}:${id}`;
+    if ((character.invitedThisYear ?? []).includes(key)) {
+      set({
+        section: null,
+        notice: { title: 'Asked', text: 'You already asked this year.' },
+      });
+      return;
+    }
+    const stamp = (text: string): LogEntry => ({
+      age: character.age,
+      year: character.birthYear + character.age,
+      text,
+      kind: 'event',
+    });
+    const markAsked = (c: Character): Character => ({
+      ...c,
+      invitedThisYear: [...(c.invitedThisYear ?? []), key],
+    });
+
+    // Who else is already under your roof gets a say about newcomers.
+    const objections = (c: Character, newcomer: string) =>
+      objectToNewcomer(c, newcomer, { scope, id });
+
+    if (scope === 'contact') {
+      const me = character.contacts.find((m) => m.id === id);
+      if (!me || me.kind === 'pet') return;
+      if (isResident(character, 'contact', id)) return;
+      const ref = contactRef(me);
+      const yes = Math.random() < inviteChance('contact', me.bond, me.kind === 'partner');
+      if (!yes) {
+        const moved = applyBond(me, -5);
+        const contacts = character.contacts.map((m) => (m.id === id ? moved : m));
+        const c = markAsked({
+          ...character,
+          contacts,
+          stats: clampStats({ ...character.stats, happiness: character.stats.happiness - 2 }),
+          log: [...character.log, stamp(`${cap(ref)} would rather stay where they are.`)],
+        });
+        persist(c, 'playing');
+        set({
+          character: c,
+          section: null,
+          notice: { title: 'Refused', eyebrow: cap(ref), text: 'They are not leaving where they are.' },
+        });
+        return;
+      }
+      let c: Character = markAsked({
+        ...character,
+        home: { ...character.home!, residents: [...character.home!.residents, { scope: 'contact' as const, id }] },
+        stats: clampStats({ ...character.stats, happiness: character.stats.happiness + 4 }),
+        log: [...character.log, stamp(`${cap(ref)} moved in with you.`)],
+      });
+      const heard = objections(c, ref);
+      c = {
+        ...heard.character,
+        log: [...heard.character.log, ...heard.lines.map((t) => stamp(t))],
+      };
+      persist(c, 'playing');
+      set({
+        character: c,
+        section: null,
+        notice: {
+          title: 'Moved in',
+          eyebrow: cap(ref),
+          text: heard.lines.length > 0 ? heard.lines[0]! : 'You make room, and they take it.',
+        },
+      });
+      return;
+    }
+
+    const me = character.family.find((m) => m.id === id);
+    if (!me) return;
+    if (isResident(character, 'family', id)) return;
+    const ref = kinshipRef(me, character.family);
+    const yes = Math.random() < inviteChance('family', me.bond, false);
+    if (!yes) {
+      const family = character.family.map((m) =>
+        m.id === id ? { ...m, bond: clampPerformance(m.bond - 3) } : m,
+      );
+      const c = markAsked({
+        ...character,
+        family,
+        stats: clampStats({ ...character.stats, happiness: character.stats.happiness - 2 }),
+        log: [...character.log, stamp(`${cap(ref)} would rather stay where they are.`)],
+      });
+      persist(c, 'playing');
+      set({
+        section: null,
+        character: c,
+        notice: { title: 'Refused', eyebrow: cap(ref), text: 'They are not leaving where they are.' },
+      });
+      return;
+    }
+    let c: Character = markAsked({
+      ...character,
+      home: { ...character.home!, residents: [...character.home!.residents, { scope: 'family' as const, id }] },
+      stats: clampStats({ ...character.stats, happiness: character.stats.happiness + 4 }),
+      log: [...character.log, stamp(`${cap(ref)} moved in with you.`)],
+    });
+    const heard = objections(c, ref);
+    c = {
+      ...heard.character,
+      log: [...heard.character.log, ...heard.lines.map((t) => stamp(t))],
+    };
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: {
+        title: 'Moved in',
+        eyebrow: cap(ref),
+        text: heard.lines.length > 0 ? heard.lines[0]! : 'You make room, and they take it.',
+      },
+    });
+  },
+
+  takeInPet: (contactId) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    if (!character.home?.movedIn) return;
+    if (!canActSocially(character)) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
+    const me = character.contacts.find((m) => m.id === contactId);
+    if (!me || me.kind !== 'pet') return;
+    if (isResident(character, 'pet', contactId)) return;
+    const label = me.petName ?? me.name;
+    const stamp = (text: string): LogEntry => ({
+      age: character.age,
+      year: character.birthYear + character.age,
+      text,
+      kind: 'event',
+    });
+    // kin attached to them may ask to keep them — owed to character,
+    // never to wealth.
+    const kin = character.family;
+    const asker =
+      kin.length > 0 && Math.random() < 0.4
+        ? kin[Math.floor(Math.random() * kin.length)]!
+        : null;
+    if (!asker) {
+      const c: Character = {
+        ...character,
+        home: {
+          ...character.home,
+          residents: [...character.home.residents, { scope: 'pet' as const, id: me.id }],
+        },
+        stats: clampStats({ ...character.stats, happiness: character.stats.happiness + 2 }),
+        log: [...character.log, stamp(`You took ${label} in.`)],
+      };
+      persist(c, 'playing');
+      set({
+        character: c,
+        section: null,
+        notice: { title: cap(label), eyebrow: 'Home', text: 'They settle in at once.' },
+      });
+      return;
+    }
+    const era = getEra(character.eraId);
+    const staged = stageEvent(
+      character,
+      petKeepEvent(label, kinshipRef(asker, character.family), me.id, asker.id),
+      era.moneyScale,
+    );
+    persist(staged.character, 'playing');
+    set({
+      character: staged.character,
+      section: null,
+      notice: null,
+      activeEvent: staged.activeEvent,
+      mustChoose: staged.activeEvent.event.choices.length > 0,
+    });
+  },
+
+  inviteFamily: (group) => {
+    const { character } = get();
+    if (!character || !character.alive) return;
+    if (get().activeEvent) return;
+    if (!character.home?.movedIn) return;
+    if (!canActSocially(character)) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
+    const label =
+      group === 'parents'
+        ? 'your parents'
+        : group === 'siblings'
+          ? 'your siblings'
+          : 'your family';
+    const targets = character.family.filter(
+      (m) =>
+        (group === 'all' ||
+          m.relation === 'mother' ||
+          m.relation === 'father' ||
+          (group === 'siblings' &&
+            (m.relation === 'brother' || m.relation === 'sister') &&
+            memberAge(m, character.age) >= 16)) &&
+        !isResident(character, 'family', m.id) &&
+        !(character.invitedThisYear ?? []).includes(`family:${m.id}`),
+    );
+    if (targets.length === 0) return;
+    const stamp = (text: string): LogEntry => ({
+      age: character.age,
+      year: character.birthYear + character.age,
+      text,
+      kind: 'event',
+    });
+    let c: Character = {
+      ...character,
+      invitedThisYear: [
+        ...(character.invitedThisYear ?? []),
+        ...targets.map((m) => `family:${m.id}`),
+      ],
+    };
+    const accepted: FamilyMember[] = [];
+    let family = [...c.family];
+    for (const t of targets) {
+      if (Math.random() < inviteChance('family', t.bond, false)) accepted.push(t);
+      else {
+        family = family.map((m) =>
+          m.id === t.id ? { ...m, bond: clampPerformance(m.bond - 3) } : m,
+        );
+      }
+    }
+    c = { ...c, family };
+    if (accepted.length === 0) {
+      c = {
+        ...c,
+        stats: clampStats({ ...c.stats, happiness: c.stats.happiness - 2 }),
+        log: [...c.log, stamp(`${cap(label)} would rather stay where they are.`)],
+      };
+      persist(c, 'playing');
+      set({
+        character: c,
+        section: null,
+        notice: { title: 'Refused', eyebrow: cap(label), text: 'They are not leaving where they are.' },
+      });
+      return;
+    }
+    // whoever already lives there gets a say, before the rest move in.
+    const heard = objectToNewcomer(c, label);
+    c = {
+      ...heard.character,
+      log: [...heard.character.log, ...heard.lines.map((t) => stamp(t))],
+    };
+    // parents in without the young ones: they ask to bring them.
+    c = {
+      ...c,
+      home: c.home
+        ? {
+            ...c.home,
+            residents: [
+              ...c.home.residents,
+              ...accepted.map((m) => ({ scope: 'family' as const, id: m.id })),
+            ],
+          }
+        : c.home,
+      stats: clampStats({ ...c.stats, happiness: c.stats.happiness + 4 }),
+      log: [...c.log, stamp(`${cap(label)} moved in with you.`)],
+    };
+    // parents in without the young ones: they ask to bring them.
+    const youngLeft =
+      group === 'parents' && accepted.length > 0
+        ? c.family.filter(
+            (m) =>
+              (m.relation === 'brother' || m.relation === 'sister') &&
+              memberAge(m, c.age) < 16 &&
+              !isResident(c, 'family', m.id),
+          )
+        : [];
+    if (youngLeft.length > 0) {
+      const era = getEra(c.eraId);
+      const staged = stageEvent(c, sibsBringEvent(), era.moneyScale);
+      persist(staged.character, 'playing');
+      set({
+        character: staged.character,
+        section: null,
+        notice: null,
+        activeEvent: staged.activeEvent,
+        mustChoose: staged.activeEvent.event.choices.length > 0,
+      });
+      return;
+    }
+    persist(c, 'playing');
+    set({
+      character: c,
+      section: null,
+      notice: {
+        title: 'Moved in',
+        eyebrow: cap(label),
+        text: heard.lines.length > 0 ? heard.lines[0]! : 'You make room, and they take it.',
+      },
     });
   },
 

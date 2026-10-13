@@ -86,6 +86,11 @@ This applies to every screen: creation, game, journal, death.
   one absurd, spliced in at random). Study more / Work more are
   never disabled: `studyCap` / `shiftCap` decide how many sessions a
   year actually pay out, and going past the cap only costs health.
+  Girls' access is historical (`schoolAtFor` in `src/data/career.ts`):
+  primary only in ancient-world and age-of-sail, none in medieval,
+  full from industrial on. A blocked girl gets one `No School` notice
+  at 6; one who ages out of what school takes leaves (`Left School`),
+  she does not graduate.
 - New selectable UI (actions menu, relationships): reuse the `Option`
   component in `src/components/Option.tsx` and selection states in
   `src/components/theme.ts` — do not invent new selection styling.
@@ -117,8 +122,10 @@ This applies to every screen: creation, game, journal, death.
   industry arrives) live in the Actions menu's Identity view. New
   contacts roll `orientation` at meeting; partners arrive matched to
   yours. A partner is always glad; a friend depends on their own tastes
-  (bisexual is a coin flip), ±20–40 bond scaled by closeness, once per
-  person per year (`flirtedThisYear`, refilled in `careerStep`).
+  (bisexual is a coin flip), and even then closeness decides whether it
+  lands (35% plus bond/200, capped at 90%), ±20–40 bond scaled by
+  closeness, once per person per year (`flirtedThisYear`, refilled in
+  `careerStep`).
 - Asking out (`askOut`, same pool as flirting but 10+, friends only,
   once per person per year in `askedOutThisYear`) turns a yes into a
   lover (`kind: 'partner'`, shown in the Circle's Lovers section). The
@@ -144,6 +151,55 @@ This applies to every screen: creation, game, journal, death.
   and lengths); refusal odds fall as the bond climbs past 30, the boost
   scales with length, it costs nothing, and it keeps its own yearly
   allowance (`datedThisYear`) so flirting first never blocks the date.
+- Houses (`src/data/houses.ts` per-era rungs room → estate, base-unit
+  costs; `src/engine/houses.ts` owns the gates): you live with family
+  (or lodgings) until you buy at 18+ through the Home block on top of
+  Belongings (`HomeBlock` + market list→detail→Buy, one home ever, no
+  selling yet). Rich houses (`familyWealth` ≥ 85) may buy a homeless
+  adult a cottage yearly (~8%). Asking someone in (`inviteHome`, own
+  button in contact/family detail, once per person per year in
+  `invitedThisYear`) rolls `inviteChance`; each other adult resident
+  rolls `welcomeChance`, objectors lose 8 bond and move out at nothing
+  (contacts also leave the Circle via `partingLine`). A married spouse
+  kept out asks yearly (`spouseAskEvent`, staged like the job chain,
+  outcomes in `homeFlowStep`): invite moves them in (+10 bond), refuse
+  costs 15 bond and winds the divorce clock (5% × `moveInRefusals`,
+  tracked on the contact). Reads go through `residentsOf` (only the
+  living resolve); `sweepResidents` drops the dead and gone — call it
+  wherever the Circle shrinks outside ageUp; ageUp sweeps on its own.
+  Pets move in through `takeInPet` (one button per animal in the Home
+  block): attached kin may ask to keep them (`petKeepEvent`, Nevermind
+  leaves them, Take it anyway moves them with a coin-flip bond hit —
+  character, never wealth). Groups move through `inviteFamily`
+  (`parents` / `siblings` (16+) / `all`: per-person rolls and yearly marks, one objection
+  round); parents arriving without young siblings stage `sibsBringEvent`
+  (bring them, or leave them at −8 bond all round). Anyone may also ask
+  in yearly (`askedEvent`: lovers, then kin, then friends, at most one
+  staged a year, outcomes in `homeFlowStep`). Buying never moves you in
+  (`movedIn` starts false; `moveIn` leaves the family home at −5 bond a
+  parent, `moveOut` leaves the house standing). Invites and asks need
+  you living there. The house view (`HouseBody`) shows worth and tax,
+  a roster (`MatesBody`, bond bars like a class list), Sell (slider
+  50–150% of value, `sellChance`: under crowds in, over walks away)
+  and Rent. Tax is 2% of value yearly in every period (`TAX_RATE`):
+  pay from the view, or the collector stages `home-tax` the year after
+  (pay even into debt, or refuse at ×1.5 owed and −5 reputation).
+  Tenants (`findTenant` stages a viewing at your price, 3 a year in
+  `viewingsThisYear`; `openRent` lists at your price for yearly
+  strangers): acceptance rolls `tenantAcceptChance` on their `wealth`,
+  they pay yearly in `ageUp` (misses journal at −5 bond), and read as
+  `your tenant` residents. Further houses are `rentals` on the
+  character (same shape minus living there): the market's later buys
+  land there, `moveIn` converts either way when homeless, everything
+  else (tax, viewings, tenants, sale) runs per property. Tenants arrive
+  singly or in groups (`makeTenantGroup`: leaseholder carries the
+  rent, companions ride `group`). Rented views (`HouseBody` tenants
+  section) kick out (`evictTenant`: −10 bond, free with `cause`) and
+  change the rent (`setRentPrice`: stays grumble at −3, leavers vacate
+  at −8). Let roofs roll yearly doings (`TENANT_EVENTS` in
+  `src/data/tenants.ts`, era-gated, choice outcomes in `tenantFlow`,
+  notices pre-applied via `applyTenantNotice`); every let roof queues
+  its own.
 - Children (`src/engine/children.ts`, `Child`/`Pregnancy` on the
   character): `makeLove` (partners only, both 14+, once per lover per
   year in `intimateThisYear`, refilled in `careerStep`) rolls

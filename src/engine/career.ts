@@ -6,6 +6,8 @@ import {
   jobForSmarts,
   nextJob,
   schoolAt,
+  schoolAtFor,
+  schoolTierName,
   workStartAge,
   SCHOOL_START_AGE,
   type JobTier,
@@ -191,7 +193,7 @@ export function careerStep(
   c: Character,
   rng: () => number = Math.random,
 ): CareerStep {
-  const school = schoolAt(c.eraId, c.age);
+  const school = schoolAtFor(c.eraId, c.age, c.gender);
   // Standing drifts down every year you are doing something, so it has
   // to be earned back. A fresh start (a new post) resets it to
   // nothing: you know nobody there and have proved nothing yet.
@@ -217,6 +219,10 @@ export function careerStep(
     datedThisYear: [],
     // and the lovers already lain with this year
     intimateThisYear: [],
+    // and the people already asked to move in this year
+    invitedThisYear: [],
+    // and the tenants sized up this year
+    viewingsThisYear: 0,
     // and the list of activities spent this year
     activitiesUsed: [],
   };
@@ -267,6 +273,26 @@ Object.assign(character, syncCrew(character));
     ]);
   }
 
+  // No school takes her: say so once, at school age.
+  if (
+    character.schoolId === null &&
+    character.jobId === null &&
+    !school &&
+    schoolAt(c.eraId, c.age) !== null &&
+    c.age === SCHOOL_START_AGE &&
+    !character.serving &&
+    !character.sentence
+  ) {
+    return hold([
+      notice(
+        'career-no-school',
+        'No School',
+        'The schools here do not take girls.',
+        'There was no school for you.',
+      ),
+    ]);
+  }
+
   // Moved up a school: the age bands changed while still enrolled.
   if (
     character.schoolId !== null &&
@@ -287,8 +313,11 @@ Object.assign(character, syncCrew(character));
     ]);
   }
 
-  // Studies finished: a degree, then the first offer of work.
+  // Studies finished: a degree, then the first offer of work. A girl
+  // aged out of what the period lets her attend leaves instead.
   if (character.schoolId !== null && !school) {
+    const oldName =
+      schoolTierName(character.eraId, character.schoolId) ?? 'school';
     character.schoolId = null;
     character.classFor = null;
     character.classmates = [];
@@ -296,6 +325,16 @@ Object.assign(character, syncCrew(character));
     // before the standing resets to a graduate's fresh start
     character.schoolRecord = Math.round(c.performance);
     character.performance = GRADUATE_STANDING;
+    if (schoolAt(character.eraId, character.age) !== null) {
+      return hold([
+        notice(
+          'career-left-school',
+          'Left School',
+          `The ${oldName} has no room for girls.`,
+          `You left ${oldName}.`,
+        ),
+      ]);
+    }
     return hold([
       notice(
         'career-graduate',

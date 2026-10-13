@@ -78,12 +78,12 @@ export const ACTIVITIES: ActivityDef[] = [
       },
       medieval: {
         text: 'Walk the lane',
-        journal: 'You walked the lane out of {place}.',
+        journal: 'You walked the lane out and back.',
         notice: 'It is a long way to nowhere and you are in no hurry.',
       },
       'age-of-sail': {
         text: 'Walk the quay',
-        journal: 'You walked the quay in {place}.',
+        journal: 'You walked the quay.',
         notice: 'Everything here smells of tar and rope and salt.',
       },
     },
@@ -101,22 +101,22 @@ export const ACTIVITIES: ActivityDef[] = [
     eras: {
       'ancient-world': {
         text: 'Train at the palaestra',
-        journal: 'You trained at the palaestra in {place}.',
+        journal: 'You trained at the palaestra.',
         notice: 'Oil, dust, and an instructor who does not accept excuses.',
       },
       medieval: {
         text: 'Practise in the yard',
-        journal: 'You practised in the yard in {place}.',
+        journal: 'You practised in the yard.',
         notice: 'The yard is mud and you are going to be mud.',
       },
       'age-of-sail': {
         text: 'Work the rigging',
-        journal: 'You worked the rigging in {place}.',
+        journal: 'You worked the rigging.',
         notice: 'Up and down a rope in a seaway, which is worse than it sounds.',
       },
       industrial: {
         text: 'Work out at the gym',
-        journal: 'You worked out at the gym in {place}.',
+        journal: 'You worked out at the gym.',
         notice: 'Heavy iron in a room with a fan bolted to the ceiling.',
       },
     },
@@ -125,24 +125,24 @@ export const ACTIVITIES: ActivityDef[] = [
     key: 'beg',
     group: 'body',
     text: 'Beg',
-    journal: 'You begged in {place}.',
+    journal: 'You begged.',
     notice: 'A few coins, and a few looks away.',
     stats: {},
     minAge: 6,
     eras: {
       'ancient-world': {
         text: 'Beg alms',
-        journal: 'You begged alms in {place}.',
+        journal: 'You begged alms.',
         notice: 'A crust here, a coin there.',
       },
       medieval: {
         text: 'Beg alms',
-        journal: 'You begged alms in {place}.',
+        journal: 'You begged alms.',
         notice: 'A crust here, a coin there.',
       },
       'modern-day': {
         text: 'Panhandle',
-        journal: 'You panhandled in {place}.',
+        journal: 'You panhandled.',
         notice: 'Mostly looks away. Sometimes not.',
       },
     },
@@ -158,17 +158,17 @@ export const ACTIVITIES: ActivityDef[] = [
     eras: {
       'ancient-world': {
         text: 'Work the villa gardens',
-        journal: 'You worked the gardens of {place}.',
+        journal: 'You worked the villa gardens.',
         notice: 'Box, laurel, and a slave who is better at this than you.',
       },
       medieval: {
         text: 'Dig the garden',
-        journal: 'You dug in the garden in {place}.',
+        journal: 'You dug in the garden.',
         notice: 'Your back has opinions and it shares them loudly.',
       },
       industrial: {
         text: 'Work an allotment',
-        journal: 'You kept an allotment in {place}.',
+        journal: 'You kept an allotment.',
         notice: 'Behind the row, out of the smoke, and nobody bothers you.',
       },
     },
@@ -184,27 +184,27 @@ export const ACTIVITIES: ActivityDef[] = [
     eras: {
       'ancient-world': {
         text: 'The baths',
-        journal: 'You spent the afternoon at the baths in {place}.',
+        journal: 'You spent the afternoon at the baths.',
         notice: 'Oil, hot water, and an hour you did not have to spend.',
       },
       medieval: {
         text: 'The bathhouse',
-        journal: 'You spent an hour at the bathhouse in {place}.',
+        journal: 'You spent an hour at the bathhouse.',
         notice: 'Hot water and strong soap.',
       },
       'age-of-sail': {
         text: 'The wash-house',
-        journal: 'You took the waters at the wash-house in {place}.',
+        journal: 'You took the waters at the wash-house.',
         notice: 'Scrubbed within an inch of polite.',
       },
       industrial: {
         text: 'The public baths',
-        journal: 'You took the waters at the public baths in {place}.',
+        journal: 'You took the waters at the public baths.',
         notice: 'A penny well spent.',
       },
       atomic: {
         text: 'The beauty parlor',
-        journal: 'You spent the afternoon at the beauty parlor in {place}.',
+        journal: 'You spent the afternoon at the beauty parlor.',
         notice: 'You come out somebody else.',
       },
     },
@@ -220,17 +220,17 @@ export const ACTIVITIES: ActivityDef[] = [
     eras: {
       'ancient-world': {
         text: 'Work in the great library',
-        journal: 'You worked in the great library at {place}.',
+        journal: 'You worked in the great library.',
         notice: 'Scrolls, dust, and someone always copying someone.',
       },
       medieval: {
         text: 'Read in the scriptorium',
-        journal: 'You read in the scriptorium in {place}.',
+        journal: 'You read in the scriptorium.',
         notice: 'A cold room, bad light, and a monk who does not like you.',
       },
       'age-of-sail': {
         text: 'Read in the coffee house',
-        journal: 'You read in the coffee house in {place}.',
+        journal: 'You read in the coffee house.',
         notice: 'A broadsheet, a coffee, and an argument at the next table.',
       },
     },
@@ -246,17 +246,17 @@ export const ACTIVITIES: ActivityDef[] = [
     eras: {
       medieval: {
         text: 'Pray',
-        journal: 'You kept the hours in {place}.',
+        journal: 'You kept the hours.',
         notice: 'The whole village is down and so are you.',
       },
       'age-of-sail': {
         text: 'Sit at anchor',
-        journal: 'You sat at anchor off {place} for a day.',
+        journal: 'You sat at anchor for a day.',
         notice: 'The only day all year with nothing whatsoever to do.',
       },
       'ancient-world': {
         text: 'Contemplate',
-        journal: 'You sat and contemplated in {place}.',
+        journal: 'You sat and contemplated.',
         notice: 'The philosophers would approve, and one of them would join you.',
       },
     },
@@ -275,17 +275,17 @@ export const ACTIVITIES: ActivityDef[] = [
     eras: {
       'ancient-world': {
         text: 'Learn declamation',
-        journal: 'You learned declamation in {place}.',
+        journal: 'You learned declamation.',
         notice: 'You stand in a hall and make the walls work for you.',
       },
       'age-of-sail': {
         text: 'Learn a shanty',
-        journal: 'You learned a shanty in {place}.',
+        journal: 'You learned a shanty.',
         notice: 'The only voice you have ever been asked to raise.',
       },
       industrial: {
         text: 'Join the church choir',
-        journal: 'You sang in the choir in {place}.',
+        journal: 'You sang in the choir.',
         notice: 'A hundred neighbours and one very exposed solo.',
       },
     },
@@ -304,12 +304,12 @@ export const ACTIVITIES: ActivityDef[] = [
     eras: {
       industrial: {
         text: 'Sit for an artist',
-        journal: 'You sat for an artist in {place}.',
+        journal: 'You sat for an artist.',
         notice: 'Three hours holding still while somebody studies your face.',
       },
       atomic: {
         text: 'Take modelling lessons',
-        journal: 'You took modelling lessons in {place}.',
+        journal: 'You took modelling lessons.',
         notice: 'A photographer’s studio, a hard chair, and a very long exposure.',
       },
     },
@@ -325,27 +325,27 @@ export const ACTIVITIES: ActivityDef[] = [
     eras: {
       'ancient-world': {
         text: 'Hear the news',
-        journal: 'You listened for news in {place}.',
+        journal: 'You listened for news.',
         notice: 'War, grain and gossip, in that order.',
       },
       medieval: {
         text: 'Hear the news',
-        journal: 'You listened to the crier in {place}.',
+        journal: 'You listened to the crier.',
         notice: 'Oyez, oyez, and so forth.',
       },
       'age-of-sail': {
         text: 'Read the gazette',
-        journal: 'You read the gazette in {place}.',
+        journal: 'You read the gazette.',
         notice: 'Three months old and still news.',
       },
       industrial: {
         text: 'Read the newspaper',
-        journal: 'You read the newspaper in {place}.',
+        journal: 'You read the newspaper.',
         notice: 'The ink comes off on your fingers.',
       },
       atomic: {
         text: 'Watch the news',
-        journal: 'You watched the evening news in {place}.',
+        journal: 'You watched the evening news.',
         notice: 'The world, in black and white.',
       },
     },

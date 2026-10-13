@@ -179,6 +179,35 @@ export function schoolAt(eraId: EraId, age: number): SchoolTier | null {
   );
 }
 
+/**
+ * The school a character of this age and sex may attend. Girls'
+ * access is historical: the ancient ludus and the petty school take
+ * them, the grammar and rhetoric schools do not; medieval schooling
+ * is closed to them; from industry on, school is open to everyone.
+ */
+const GIRLS_PRIMARY_ONLY: EraId[] = ['ancient-world', 'age-of-sail'];
+const GIRLS_NO_SCHOOL: EraId[] = ['medieval'];
+
+export function schoolAtFor(
+  eraId: EraId,
+  age: number,
+  gender: string,
+): SchoolTier | null {
+  if (gender !== 'Female') return schoolAt(eraId, age);
+  if (GIRLS_NO_SCHOOL.includes(eraId)) return null;
+  const tier = schoolAt(eraId, age);
+  if (!tier) return null;
+  if (GIRLS_PRIMARY_ONLY.includes(eraId) && tier.id !== 'primary-school') {
+    return null;
+  }
+  return tier;
+}
+
+/** Display name of a tier by id, for leavers. */
+export function schoolTierName(eraId: EraId, id: string): string | null {
+  return SCHOOLS[eraId].find((s) => s.id === id)?.name ?? null;
+}
+
 /** Earliest age any job in this era can be held. */
 export function workStartAge(eraId: EraId): number {
   return Math.max(GRADUATION_AGE, ...JOBS[eraId].map((j) => j.minAge));

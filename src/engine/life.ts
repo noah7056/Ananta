@@ -24,7 +24,7 @@ export function formatFunds(money: number, symbol: string): string {
 
 /** Single plain line for uneventful years. */
 export function quietLine(c: Character, placeName: string): string {
-  return renderText('Another year comes in {place}.', c, placeName);
+  return renderText('Another year comes.', c, placeName);
 }
 
 /**
