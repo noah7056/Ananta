@@ -4,6 +4,7 @@ import { canSeeDoctor } from '../engine/infancy';
 import { useGame, STUDY_START_AGE } from '../store/gameStore';
 import { StatCell, FundsCell } from './StatBar';
 import { Journal } from './Journal';
+import { downloadLife } from '../engine/life';
 import { EventModal } from './EventModal';
 import { SectionModal } from './SectionModal';
 import { ActionBar } from './ActionBar';
@@ -61,6 +62,9 @@ export function GameScreen() {
               Age {character.age} · {character.gender} · {place}
             </div>
           </div>
+          <button onClick={() => downloadLife(character)} className={MS.ghostBtn}>
+            Export
+          </button>
           <button onClick={() => setConfirming(true)} className={MS.ghostBtn}>
             New life
           </button>

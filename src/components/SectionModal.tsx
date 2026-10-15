@@ -48,18 +48,18 @@ import {
   canSeeDoctor,
   canSeeFamily,
 } from '../engine/infancy';
-import { availableActivities, effectiveCost, needsParentPayer } from '../engine/activities';import { walkPlacesFor } from '../engine/walks';
+import { availableActivities, effectiveCost, needsParentPayer, coursesFor, courseCap } from '../engine/activities';import { walkPlacesFor } from '../engine/walks';
 import { WALK_DURATIONS } from '../data/walks';
 import { salonCost, salonsFor } from '../engine/salon';
 import { aislesFor, isOwnedOut, itemById, itemsFor, ownedEdibles, ringsOwned, shopById, shopCost, shopsFor } from '../engine/shopping';
 import { licenceCost, canDrive, canGetLicence, ownsVehicle } from '../engine/driving';
-import { venuesFor, venueCost } from '../data/weddings';
+import { venuesFor, venueCost, proposalSpotsFor, dateSpotsFor, dateSpotCost, DATE_OUTINGS } from '../data/weddings';
 import { WARS } from '../data/wars';
 import { Option } from './Option';
 import { latestNews, newsYear } from '../engine/news';
 import { GIG_MULTIPLES } from '../data/gigs';
 import { gigsFor, GIG_AGE } from '../engine/gigs';
-import { ACTIVITIES, BEG_CAP, resolveActivity } from '../data/activities';
+import { ACTIVITIES, BEG_CAP, certificateName, resolveActivity } from '../data/activities';
 import { BOOKS } from '../data/books';
 import { availableBooks } from '../engine/books';
 import type { BookDef } from '../data/books';
@@ -96,7 +96,7 @@ export function SectionModal({
   onClose: () => void;
 }) {
   const [view, setView] = useState<
-    'menu' | 'doctor' | 'class' | 'walk' | 'books' | 'reading' | 'career' | 'gigs' | 'sectors' | 'positions' | 'position' | 'identity' | 'date' | 'crew' | 'salon' | 'news' | 'shops' | 'shop' | 'beg' | 'degrees' | 'uni' | 'licence'
+    'menu' | 'doctor' | 'class' | 'walk' | 'books' | 'reading' | 'courses' | 'career' | 'studies' | 'record' | 'gigs' | 'sectors' | 'positions' | 'position' | 'identity' | 'date' | 'crew' | 'salon' | 'news' | 'shops' | 'shop' | 'beg' | 'degrees' | 'uni' | 'licence'
   >('menu');
   const [shopId, setShopId] = useState<string | null>(null);
   const [shopAisle, setShopAisle] = useState<string | null>(null);
@@ -109,11 +109,11 @@ export function SectionModal({
   const [datingId, setDatingId] = useState<string | null>(null);
   const [huntSector, setHuntSector] = useState<string | null>(null);
   const [huntJob, setHuntJob] = useState<string | null>(null);
-  const [assetStep, setAssetStep] = useState<'list' | 'item' | 'gift' | 'drive' | 'houses' | 'house' | 'mates' | 'sell' | 'rent'>('list');
+  const [assetStep, setAssetStep] = useState<'list' | 'item' | 'gift' | 'drive' | 'houses' | 'house' | 'mates' | 'sell' | 'rent' | 'invite'>('list');
   const [assetIdx, setAssetIdx] = useState<number | null>(null);
   const [houseUid, setHouseUid] = useState<string | null>(null);
   const houseProp =
-    assetStep === 'house' || assetStep === 'mates' || assetStep === 'sell' || assetStep === 'rent'
+    assetStep === 'house' || assetStep === 'mates' || assetStep === 'sell' || assetStep === 'rent' || assetStep === 'invite'
       ? (houseUid ?? (character.home ? 'home' : null))
       : null;
   const pendingBook = useGame((s) => s.pendingBook);
@@ -152,8 +152,10 @@ export function SectionModal({
   const title =
     kind === 'actions' && view === 'walk'
       ? resolveActivity(WALK, character.eraId).text
-      : kind === 'actions' && view === 'books'
-        ? resolveActivity(LIBRARY, character.eraId).text
+          : kind === 'actions' && view === 'books'
+            ? resolveActivity(LIBRARY, character.eraId).text
+          : kind === 'actions' && view === 'courses'
+            ? 'Courses'
           : kind === 'actions' && view === 'salon'
             ? resolveActivity(SALON, character.eraId).text
           : kind === 'actions' && view === 'shops'
@@ -181,9 +183,13 @@ export function SectionModal({
               : kind === 'work' && view === 'position' && huntJob && jobById(character.eraId, huntJob)
                 ? cap(jobById(character.eraId, huntJob)!.title)
               : kind === 'work' && view === 'crew'
-                ? 'Workplace'
+                ? (character.serving ? 'Unit' : 'Workplace')
               : kind === 'work' && view === 'degrees'
                 ? 'Higher study'
+              : kind === 'work' && view === 'record'
+                ? 'Record'
+              : kind === 'work' && view === 'studies'
+                ? (character.uniId && degreeById(character.uniId) ? degreeById(character.uniId)!.field : 'Studies')
               : kind === 'work' && view === 'uni' && character.uniId && degreeById(character.uniId)
                 ? degreeById(character.uniId)!.field
               : view === 'class'
@@ -227,6 +233,9 @@ export function SectionModal({
           onBack={() => setView('menu')}
         />
       )}
+      {kind === 'actions' && view === 'courses' && (
+        <CourseBody character={character} onBack={() => setView('menu')} />
+      )}
       {kind === 'actions' && view === 'reading' && reading && (
         <ReadingBody book={reading} onBack={() => setView('menu')} />
       )}
@@ -266,12 +275,13 @@ export function SectionModal({
       {kind === 'actions' && view === 'licence' && (
         <LicenceBody character={character} onBack={() => setView('menu')} />
       )}
-      {kind === 'actions' && view !== 'walk' && view !== 'books' && view !== 'reading' && view !== 'identity' && view !== 'salon' && view !== 'news' && view !== 'shops' && view !== 'shop' && view !== 'beg' && view !== 'licence' && !doctorView && (
+      {kind === 'actions' && view !== 'walk' && view !== 'books' && view !== 'reading' && view !== 'courses' && view !== 'identity' && view !== 'salon' && view !== 'news' && view !== 'shops' && view !== 'shop' && view !== 'beg' && view !== 'licence' && !doctorView && (
         <ActionsMenu
           character={character}
           onDoctor={() => setView('doctor')}
           onWalk={() => setView('walk')}
           onLibrary={() => setView('books')}
+          onCourses={() => setView('courses')}
           onIdentity={() => setView('identity')}
           onSalon={() => setView('salon')}
           onNews={() => setView('news')}
@@ -301,14 +311,27 @@ export function SectionModal({
         <CareerMenu
           character={character}
           onOccupation={() => setView('career')}
+          onStudies={() => setView('studies')}
           onGigs={() => setView('gigs')}
           onHunt={() => setView('sectors')}
           onDegrees={() => setView('degrees')}
+          onRecord={() => setView('record')}
         />
       )}
       {kind === 'work' && view === 'career' && (
         <CareerBody
           character={character}
+          tab="work"
+          onClass={() => setView('class')}
+          onCrew={() => setView('crew')}
+          onUni={() => setView('uni')}
+          onBack={() => setView('menu')}
+        />
+      )}
+      {kind === 'work' && view === 'studies' && (
+        <CareerBody
+          character={character}
+          tab="studies"
           onClass={() => setView('class')}
           onCrew={() => setView('crew')}
           onUni={() => setView('uni')}
@@ -318,8 +341,11 @@ export function SectionModal({
       {kind === 'work' && view === 'degrees' && (
         <DegreesBody character={character} onBack={() => setView('menu')} />
       )}
+      {kind === 'work' && view === 'record' && (
+        <RecordBody character={character} onBack={() => setView('menu')} />
+      )}
       {kind === 'work' && view === 'uni' && (
-        <UniBody character={character} onBack={() => setView('career')} />
+        <UniBody character={character} onBack={() => setView('studies')} />
       )}
       {kind === 'work' && view === 'class' && (
         <ClassBody character={character} onBack={() => setView('career')} />
@@ -370,15 +396,19 @@ export function SectionModal({
 function CareerMenu({
   character,
   onOccupation,
+  onStudies,
   onGigs,
   onHunt,
   onDegrees,
+  onRecord,
 }: {
   character: Character;
   onOccupation: () => void;
+  onStudies: () => void;
   onGigs: () => void;
   onHunt: () => void;
   onDegrees: () => void;
+  onRecord: () => void;
 }) {
   const school = schoolName(character);
   const job = character.jobId ? jobById(character.eraId, character.jobId) : null;
@@ -394,14 +424,14 @@ function CareerMenu({
     <div>
       <div className={`${MS.label} mb-2`}>Current occupation</div>
       <button
-        onClick={character.sentence ? () => {} : onOccupation}
+        onClick={character.sentence || character.serving ? () => {} : onOccupation}
         className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
       >
         {school ?? job?.title ?? service ?? 'Nothing yet'}
       </button>
       {degree ? (
         <button
-          onClick={onOccupation}
+          onClick={onStudies}
           className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
         >
           {degree.field}
@@ -432,6 +462,12 @@ function CareerMenu({
           Look for a job
         </button>
       )}
+      <button
+        onClick={onRecord}
+        className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
+      >
+        Record
+      </button>
     </div>
   );
 }
@@ -726,6 +762,7 @@ function SectorsBody({
         character.age,
         character.stats.smarts,
         character.degrees ?? [],
+        character.certificates ?? [],
       ).length > 0,
   );
 
@@ -778,6 +815,7 @@ function PositionsBody({
     character.age,
     character.stats.smarts,
     character.degrees ?? [],
+    character.certificates ?? [],
   );
   const symbol = moneySymbolOf(character);
   const scale = getEra(character.eraId).moneyScale;
@@ -840,6 +878,7 @@ function PositionBody({
 
   const degree = job.requiresDegree ? degreeById(job.requiresDegree) : null;
   const rides = !job.requiresVehicle || ownsVehicle(character);
+  const certified = !job.requiresCertificate || (character.certificates ?? []).includes(job.requiresCertificate);
   const rows: [string, string][] = [
     ['Position', job.position],
     ['Earns', `${formatFunds(Math.max(1, Math.round((job.wage * scale) / 12)), symbol)} / month`],
@@ -848,6 +887,8 @@ function PositionBody({
     ['Smarts', `${job.smartsRequired}`],
   ];
   if (degree) rows.push(['Degree', degree.field]);
+  else if (job.requiresAnyDegree) rows.push(['Degree', 'Any higher study']);
+  if (job.requiresCertificate) rows.push(['Certificate', certified ? certificateName(job.requiresCertificate) : `${certificateName(job.requiresCertificate)} · wanting`]);
   rows.push(['Transport', rides ? 'Own transport' : 'Own transport · wanting']);
 
   return (
@@ -864,7 +905,7 @@ function PositionBody({
         </div>
       ))}
       <button
-        disabled={!rides}
+        disabled={!rides || !certified}
         onClick={() => requestInterview(job.id)}
         className={`${MS.primaryBtn} mt-4 w-full py-3 text-base disabled:cursor-not-allowed disabled:opacity-40`}
       >
@@ -891,11 +932,13 @@ function DateBody({
   onBack: () => void;
 }) {
   const takeDate = useGame((s) => s.takeDate);
-  const places = walkPlacesFor(character);
+  const [outing, setOuting] = useState<string>('stroll');
+  const spots = dateSpotsFor(character, outing);
   const [duration, setDuration] = useState(WALK_DURATIONS[1].id);
-  const [place, setPlace] = useState(places[0]?.id ?? '');
+  const [place, setPlace] = useState(spots[0]?.id ?? '');
+  const current = spots.find((p) => p.id === place) ?? spots[0] ?? null;
 
-  if (places.length === 0) {
+  if (spots.length === 0) {
     return (
       <div className={`${MS.ghostBtn} w-full cursor-not-allowed py-2.5 text-center text-[15px] opacity-40`}>
         Nowhere yet
@@ -905,16 +948,32 @@ function DateBody({
 
   return (
     <div>
-      <div className={`${MS.label} mb-2`}>Where</div>
+      <div className={`${MS.label} mb-2`}>Outing</div>
+      <select
+        aria-label="What kind of evening"
+        value={outing}
+        onChange={(e) => {
+          setOuting(e.target.value);
+          setPlace(dateSpotsFor(character, e.target.value)[0]?.id ?? '');
+        }}
+        className={`${MS.input} w-full py-2.5 text-[15px]`}
+      >
+        {DATE_OUTINGS.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.text}
+          </option>
+        ))}
+      </select>
+      <div className={`${MS.label} mb-2 mt-4`}>Where</div>
       <select
         aria-label="Where the evening goes"
-        value={place}
+        value={current?.id ?? ''}
         onChange={(e) => setPlace(e.target.value)}
         className={`${MS.input} w-full py-2.5 text-[15px]`}
       >
-        {places.map((p) => (
+        {spots.map((p) => (
           <option key={p.id} value={p.id}>
-            {p.text}
+            {p.text}{dateSpotCost(p, character) > 0 ? ` · ${formatFunds(dateSpotCost(p, character), moneySymbolOf(character))}` : ''}
           </option>
         ))}
       </select>
@@ -932,11 +991,58 @@ function DateBody({
         ))}
       </select>
       <button
-        onClick={() => takeDate(contactId, duration, place)}
+        onClick={() => current && takeDate(contactId, duration, current.id)}
         className={`${MS.primaryBtn} mt-4 w-full py-3 text-base`}
       >
         Go
       </button>
+      <button onClick={onBack} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
+        Nevermind
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The record: degrees earned, schooling, posts held. Read-only.
+ */
+function RecordBody({
+  character,
+  onBack,
+}: {
+  character: Character;
+  onBack: () => void;
+}) {
+  const degrees = character.degrees ?? [];
+  const job = character.jobId ? jobById(character.eraId, character.jobId) : null;
+  const rows: [string, string][] = [
+    ['Schooling', character.schoolRecord !== null && character.schoolRecord !== undefined ? `${character.schoolRecord}` : '—'],
+    ['Posts held', `${character.jobsHeld ?? 0}`],
+    ['Raises', `${character.jobRaises ?? 0}`],
+    ['Now', schoolName(character) ?? job?.title ?? (character.uniId && degreeById(character.uniId)?.field) ?? 'Nothing yet'],
+  ];
+  return (
+    <div>
+      <div className={`${MS.label} mb-2`}>Degrees</div>
+      {degrees.length === 0 ? (
+        <div className="py-2 text-[13px] text-ink-dim">None yet.</div>
+      ) : (
+        <div className="divide-y divide-line">
+          {degrees.map((id) => (
+            <div key={id} className="py-2 text-sm font-semibold text-ink">
+              {degreeById(id)?.field ?? id}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mt-4 divide-y divide-line">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-baseline justify-between py-2">
+            <span className={MS.label}>{k}</span>
+            <span className="text-[15px] font-semibold text-ink">{v}</span>
+          </div>
+        ))}
+      </div>
       <button onClick={onBack} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
         Nevermind
       </button>
@@ -950,12 +1056,14 @@ function DateBody({
  */
 function CareerBody({
   character,
+  tab,
   onClass,
   onCrew,
   onUni,
   onBack,
 }: {
   character: Character;
+  tab: 'work' | 'studies';
   onClass: () => void;
   onCrew: () => void;
   onUni: () => void;
@@ -972,7 +1080,8 @@ function CareerBody({
   const service = character.serving
     ? (WARS.find((w) => w.id === character.serving)?.name ?? 'At war')
     : null;
-  const standing = school || degree ? 'Studies' : job ? 'Work' : 'Career';
+  const isStudies = tab === 'studies';
+  const standing = isStudies ? 'Studies' : school ? 'Studies' : job ? 'Work' : 'Career';
   const symbol = moneySymbolOf(character);
   const monthly = monthlyWage(character, getEra(character.eraId).moneyScale);
 
@@ -981,10 +1090,10 @@ function CareerBody({
       <div className="flex items-baseline justify-between border-b border-line pb-3">
         <span className={MS.label}>Doing</span>
         <span className="text-[15px] font-semibold text-ink">
-          {school ?? job?.sector ?? degree?.field ?? service ?? 'Nothing yet'}
+          {isStudies ? (degree?.field ?? 'Nothing yet') : (school ?? job?.sector ?? service ?? 'Nothing yet')}
         </span>
       </div>
-      {job && (
+      {!isStudies && job && (
         <div className="mt-3 flex items-baseline justify-between border-b border-line pb-3">
           <span className={MS.label}>Position</span>
           <span className="text-[15px] font-semibold text-ink">
@@ -995,7 +1104,7 @@ function CareerBody({
       <div className="mt-4">
         <StatBar label={standing} value={character.performance} />
       </div>
-      {job && (
+      {!isStudies && job && (
         <div className="mt-3 flex items-baseline justify-between border-b border-line pb-3">
           <span className={MS.label}>Earns</span>
           <span className="text-[15px] font-semibold tabular-nums text-ink">
@@ -1003,7 +1112,7 @@ function CareerBody({
           </span>
         </div>
       )}
-      {job && (
+      {!isStudies && job && (
         <div className="mt-3 flex items-baseline justify-between border-b border-line pb-3">
           <span className={MS.label}>Hours</span>
           <span className="text-[15px] font-semibold tabular-nums text-ink">
@@ -1012,7 +1121,7 @@ function CareerBody({
         </div>
       )}
       <div className="mt-4 space-y-2">
-        {school && (
+        {!isStudies && school && !service && (
           <button
             onClick={() => study()}
             className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
@@ -1020,7 +1129,7 @@ function CareerBody({
             Study more
           </button>
         )}
-        {school && (
+        {!isStudies && school && !service && (
           <button
             onClick={onClass}
             className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
@@ -1028,8 +1137,7 @@ function CareerBody({
             Class
           </button>
         )}
-        {degree && job && <div className={MS.label}>Studies</div>}
-        {degree && (
+        {isStudies && degree && (
           <button
             onClick={() => studyUni()}
             className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
@@ -1037,7 +1145,7 @@ function CareerBody({
             Study more
           </button>
         )}
-        {degree && (
+        {isStudies && degree && (
           <button
             onClick={onUni}
             className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
@@ -1045,7 +1153,7 @@ function CareerBody({
             Course mates
           </button>
         )}
-        {degree && (
+        {isStudies && degree && (
           <button
             onClick={() => quitUni()}
             className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
@@ -1053,8 +1161,7 @@ function CareerBody({
             Leave
           </button>
         )}
-        {degree && job && <div className={`${MS.label} mt-4`}>Work</div>}
-        {job && (
+        {!isStudies && job && !service && (
           <button
             onClick={() => workHarder()}
             className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
@@ -1062,7 +1169,7 @@ function CareerBody({
             Work more
           </button>
         )}
-        {job && (
+        {!isStudies && job && !service && (
           <button
             onClick={onCrew}
             className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
@@ -1070,7 +1177,7 @@ function CareerBody({
             Workplace
           </button>
         )}
-        {job && (
+        {!isStudies && job && !service && (
           <button
             onClick={() => quitJob()}
             className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
@@ -1485,13 +1592,14 @@ function PeopleBody({
   }
 
   const friends = character.contacts.filter((m) => m.kind === 'friend');
-  const lovers = character.contacts.filter((m) => m.kind === 'partner');
+  const lovers = character.contacts.filter((m) => m.kind === 'partner' && !m.married);
+  const spouses = character.contacts.filter((m) => m.kind === 'partner' && m.married);
   const pets = character.contacts.filter((m) => m.kind === 'pet');
   const children = character.children ?? [];
 
   return (
     <div>
-      {(character.family.length > 0 || children.length > 0) && (
+      {(character.family.length > 0 || children.length > 0 || spouses.length > 0) && (
         <>
           <div className={MS.label}>Family</div>
           <div className="mt-1 divide-y divide-line">
@@ -1528,6 +1636,14 @@ function PeopleBody({
                 </div>
                 <BondStrip value={k.bond} />
               </button>
+            ))}
+            {spouses.map((p) => (
+              <ContactRow
+                key={p.id}
+                character={character}
+                contact={p}
+                onClick={() => setOpen({ kind: 'contact', id: p.id })}
+              />
             ))}
           </div>
         </>
@@ -1596,7 +1712,15 @@ function ChildBody({
 }) {
   const interactChild = useGame((s) => s.interactChild);
   const nameChild = useGame((s) => s.nameChild);
+  const cureAilment = useGame((s) => s.cureAilment);
   const [naming, setNaming] = useState(false);
+  const sick = character.ailments.filter(
+    (a) =>
+      a.ownerId === child.id &&
+      a.known &&
+      AILMENTS[a.ailmentId] &&
+      !AILMENTS[a.ailmentId].incurable,
+  );
 
   if (naming) {
     return (
@@ -1630,6 +1754,20 @@ function ChildBody({
             Spend time together
           </button>
         )}
+        {sick.map((a) => {
+          const def = AILMENTS[a.ailmentId];
+          const cost = character.serving ? 0 : def.cureCost * getEra(character.eraId).moneyScale;
+          return (
+            <button
+              key={a.ailmentId}
+              disabled={character.money < cost}
+              onClick={() => cureAilment(a.ailmentId, child.id)}
+              className={`${MS.ghostBtn} w-full py-2.5 text-[15px] disabled:cursor-not-allowed disabled:opacity-40`}
+            >
+              Cure {def.name} · {formatFunds(cost, moneySymbolOf(character))}
+            </button>
+          );
+        })}
         <button
           onClick={() => setNaming(true)}
           className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
@@ -1961,7 +2099,7 @@ function ProposeBody({
 }) {
   const propose = useGame((s) => s.propose);
   const rings = ringsOwned(character);
-  const places = walkPlacesFor(character);
+  const places = proposalSpotsFor(character);
   const [ringId, setRingId] = useState(rings[0]?.item.id ?? '');
   const [placeId, setPlaceId] = useState(places[0]?.id ?? '');
 
@@ -2338,6 +2476,7 @@ function ActionsMenu({
   onDoctor,
   onWalk,
   onLibrary,
+  onCourses,
   onIdentity,
   onSalon,
   onNews,
@@ -2349,6 +2488,7 @@ function ActionsMenu({
   onDoctor: () => void;
   onWalk: () => void;
   onLibrary: () => void;
+  onCourses: () => void;
   onIdentity: () => void;
   onSalon: () => void;
   onNews: () => void;
@@ -2358,6 +2498,7 @@ function ActionsMenu({
 }) {
   const takeActivity = useGame((s) => s.takeActivity);
   const available = availableActivities(character);
+  const courses = coursesFor(character);
   const reachable =
     canSeeDoctor(character) ||
     available.length > 0 ||
@@ -2408,6 +2549,14 @@ function ActionsMenu({
           className={`${MS.ghostBtn} mb-4 w-full py-2.5 text-[15px]`}
         >
           Identity
+        </button>
+      )}
+      {courses.length > 0 && !character.serving && !character.sentence && (
+        <button
+          onClick={onCourses}
+          className={`${MS.ghostBtn} mb-4 w-full py-2.5 text-[15px]`}
+        >
+          Courses
         </button>
       )}
       {groups.map(
@@ -2469,6 +2618,89 @@ function ActionsMenu({
             </div>
           ),
       )}
+    </div>
+  );
+}
+
+/**
+ * Courses: taught lessons with a yearly cap and a certificate at
+ * 100 skill. Creative posts ask for the certificate by name.
+ */
+function CourseBody({
+  character,
+  onBack,
+}: {
+  character: Character;
+  onBack: () => void;
+}) {
+  const takeActivity = useGame((s) => s.takeActivity);
+  const courses = coursesFor(character);
+  const taken = character.coursesThisYear ?? 0;
+  const cap = courseCap(Math.min(character.stats.health, character.stats.energy ?? 70));
+
+  if (courses.length === 0) {
+    return (
+      <div className={`${MS.ghostBtn} w-full cursor-not-allowed py-2.5 text-center text-[15px] opacity-40`}>
+        Nothing yet
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex items-baseline justify-between border-b border-line pb-3">
+        <span className={MS.label}>Lessons this year</span>
+        <span className="text-[15px] font-semibold tabular-nums text-ink">
+          {taken} / {cap}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {courses.map((def) => {
+          const resolved = resolveActivity(def, character.eraId);
+          const price = effectiveCost(def, character);
+          const payable = needsParentPayer(def, character) || price <= character.money;
+          const progress = character.skillProgress[def.key] ?? 0;
+          const certified = (character.certificates ?? []).includes(def.course!.cert);
+          return (
+            <div key={def.key} className={`${MS.panelSoft} p-4`}>
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="text-sm font-semibold text-ink">{resolved.text}</div>
+                {certified && (
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
+                    Certificate
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-1 flex-1 overflow-hidden rounded-full bg-ink/10">
+                  <div
+                    className="h-full rounded-full bg-ink transition-all duration-500"
+                    style={{ width: `${Math.min(100, progress)}%` }}
+                  />
+                </div>
+                <span className="text-[11px] tabular-nums text-ink-faint">
+                  {Math.floor(progress)}
+                </span>
+              </div>
+              <button
+                disabled={!payable}
+                onClick={() => takeActivity(def.key)}
+                className={`${MS.ghostBtn} mt-3 w-full py-2.5 text-[15px] disabled:cursor-not-allowed disabled:opacity-40`}
+              >
+                Take a lesson
+                {price > 0 && (
+                  <span className="text-ink-faint">
+                    {' '}· {formatFunds(price, moneySymbolOf(character))}
+                  </span>
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={onBack} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
+        Nevermind
+      </button>
     </div>
   );
 }
@@ -2654,6 +2886,7 @@ function ShopBody({
 }) {
   const takeShop = useGame((s) => s.takeShop);
   const askForShop = useGame((s) => s.askForShop);
+  const pendingChildShop = useGame((s) => s.pendingChildShop);
   const shop = shopById(shopId);
   const symbol = moneySymbolOf(character);
   const aisles = aislesFor(character, shopId);
@@ -2661,6 +2894,12 @@ function ShopBody({
   const [selected, setSelected] = useState<string | null>(null);
   const kin = askableRelatives(character);
   const [memberId, setMemberId] = useState(kin[0]?.id ?? '');
+  // a child's errand pre-selects what they asked for
+  useEffect(() => {
+    if (pendingChildShop && selected === null) {
+      setSelected(pendingChildShop.itemId);
+    }
+  }, [pendingChildShop, selected]);
   if (!shop) {
     return (
       <button onClick={onBack} className={`${MS.ghostBtn} w-full py-2.5`}>
@@ -2672,6 +2911,15 @@ function ShopBody({
   const items = itemsFor(character, shopId, currentAisle);
   const current = items.find((i) => i.id === selected) ?? null;
   const parent = kin.find((m) => m.id === memberId) ?? kin[0];
+  const stackable =
+    !!current?.sates ||
+    (!!current && current.cost <= 4 && !current.once && !current.vehicle && !current.ring);
+  const [qty, setQty] = useState(1);
+  const total = current ? shopCost(current, character) * (stackable ? qty : 1) : 0;
+  const errandKid =
+    pendingChildShop && current && pendingChildShop.itemId === current.id
+      ? (character.children ?? []).find((k) => k.id === pendingChildShop.childId) ?? null
+      : null;
 
   return (
     <div>
@@ -2710,7 +2958,10 @@ function ShopBody({
                 active={current?.id === i.id}
                 title={i.text}
                 meta={formatFunds(price, symbol)}
-                onClick={() => setSelected(i.id)}
+                onClick={() => {
+                  setSelected(i.id);
+                  setQty(1);
+                }}
                 disabled={ownedOut}
                 className="w-full rounded-lg px-4 py-2.5 text-center disabled:cursor-not-allowed disabled:opacity-40 [&>div]:text-center"
               />
@@ -2718,13 +2969,34 @@ function ShopBody({
           })}
         </div>
       )}
+      {current && stackable && !errandKid && (
+        <>
+          <div className={`${MS.label} mb-2 mt-4`}>Amount</div>
+          <select
+            aria-label="How many to buy"
+            value={qty}
+            onChange={(e) => setQty(Number(e.target.value))}
+            className={`${MS.input} w-full py-2.5 text-[15px]`}
+          >
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
       {current && (
         <button
-          disabled={character.money < shopCost(current, character) || isOwnedOut(current, character)}
-          onClick={() => takeShop(current.id)}
+          disabled={character.money < total || isOwnedOut(current, character)}
+          onClick={() => takeShop(current.id, stackable && !errandKid ? qty : 1)}
           className={`${MS.primaryBtn} mt-4 w-full py-3 text-base disabled:cursor-not-allowed disabled:opacity-40`}
         >
-          Buy · {formatFunds(shopCost(current, character), symbol)}
+          {errandKid
+            ? `Buy it for ${errandKid.firstName} · ${formatFunds(shopCost(current, character), symbol)}`
+            : stackable && qty > 1
+              ? `Buy ${qty} · ${formatFunds(total, symbol)}`
+              : `Buy · ${formatFunds(total, symbol)}`}
         </button>
       )}
       {current && parent && !isOwnedOut(current, character) && (
@@ -3097,13 +3369,51 @@ function ReadingBody({
 }
 
 /**
- * What the open book looks like: two pages with lines of print on
- * them, a different arrangement every page. Seeded by the page number
- * so it never flickers mid-read.
+ * What the open book looks like: pages with lines of print on them,
+ * a different arrangement every page. Seeded by the page number so
+ * it never flickers mid-read. Even spreads read as two columns;
+ * odd pages read as one column with a dropped initial, and every
+ * seventh page opens a new chapter.
  */
 function PageGraphic({ page }: { page: number }) {
-  const left = linesFor(page * 2);
-  const right = linesFor(page * 2 + 1);
+  const left = linesFor(page * 2, 9);
+  const right = linesFor(page * 2 + 1, 7);
+  const single = linesFor(page * 3 + 1, 12);
+  const chapter = page % 7 === 1;
+  if (chapter) {
+    return (
+      <div className="rounded-lg border border-line bg-wash px-5 py-4">
+        <div className="mb-3 h-2 w-1/3 rounded-full bg-ink/70" />
+        {single.slice(0, 8).map((w, i) => (
+          <div
+            key={i}
+            className="mb-2 h-1.5 rounded-full bg-ink/25 last:mb-0"
+            style={{ width: `${w * 100}%` }}
+          />
+        ))}
+      </div>
+    );
+  }
+  if (page % 2 === 1) {
+    return (
+      <div className="rounded-lg border border-line bg-wash px-5 py-4">
+        <div className="flex gap-3">
+          <div className="flex h-10 w-8 shrink-0 items-center justify-center rounded bg-ink/70 text-lg font-semibold text-paper">
+            {String.fromCharCode(65 + (page % 26))}
+          </div>
+          <div className="flex-1">
+            {single.map((w, i) => (
+              <div
+                key={i}
+                className="mb-2 h-1.5 rounded-full bg-ink/25 last:mb-0"
+                style={{ width: `${w * 100}%` }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex gap-3 rounded-lg border border-line bg-wash px-5 py-4">
       <div className="flex-1">
@@ -3130,14 +3440,15 @@ function PageGraphic({ page }: { page: number }) {
   );
 }
 
-/** Nine print-line widths from a seed, each between two-fifths and full. */
-function linesFor(seed: number): number[] {
+/** Print-line widths from a seed, each between two-fifths and full. */
+function linesFor(seed: number, count = 9): number[] {
   let s = (seed * 2654435761) % 4294967296;
   const rnd = () => {
     s = (s * 1664525 + 1013904223) % 4294967296;
     return s / 4294967296;
   };
-  return Array.from({ length: 9 }, () => 0.4 + rnd() * 0.55);
+  const n = 7 + Math.floor(rnd() * 5);
+  return Array.from({ length: count === 9 ? n : count }, () => 0.4 + rnd() * 0.55);
 }
 
 /**
@@ -3200,7 +3511,7 @@ export function DoctorBody({
   const checkup = useGame((s) => s.checkup);
   const [selected, setSelected] = useState<string | null>(null);
   const symbol = moneySymbolOf(character);
-  const fee = 2 * getEra(character.eraId).moneyScale;
+  const fee = character.serving ? 0 : 2 * getEra(character.eraId).moneyScale;
 
   const ids = character.ailments
     .filter(
@@ -3213,7 +3524,7 @@ export function DoctorBody({
     .map((a) => a.ailmentId);
   const current = selected && ids.includes(selected) ? selected : (ids[0] ?? null);
   const currentCost =
-    current !== null ? AILMENTS[current].cureCost * getEra(character.eraId).moneyScale : 0;
+    current !== null ? (character.serving ? 0 : AILMENTS[current].cureCost * getEra(character.eraId).moneyScale) : 0;
 
   return (
     <div>
@@ -3309,7 +3620,7 @@ function ChildCureBlock({
     .map((a) => a.ailmentId);
   const current = selected && ids.includes(selected) ? selected : (ids[0] ?? null);
   if (current === null) return null;
-  const cost = AILMENTS[current].cureCost * getEra(character.eraId).moneyScale;
+  const cost = character.serving ? 0 : AILMENTS[current].cureCost * getEra(character.eraId).moneyScale;
   return (
     <div className="mt-4 border-t border-line pt-4">
       <div className={`${MS.label} mb-2`}>{name} — {ids.map((id) => AILMENTS[id].name).join(', ')}</div>
@@ -3347,34 +3658,16 @@ function HomeBlock({
   character,
   onMarket,
   onHouse,
+  onInvite,
 }: {
   character: Character;
   onMarket: () => void;
   onHouse: (prop: string) => void;
+  onInvite: () => void;
 }) {
-  const takeInPet = useGame((s) => s.takeInPet);
-  const inviteFamily = useGame((s) => s.inviteFamily);
   const moveIn = useGame((s) => s.moveIn);
   const owned = houseName(character);
   const movedIn = character.home?.movedIn ?? false;
-  const residents = residentsOf(character);
-  const petsOut = character.contacts.filter(
-    (p) => p.kind === 'pet' && !isResident(character, 'pet', p.id),
-  );
-  const parentsOut = character.family.some(
-    (m) =>
-      (m.relation === 'mother' || m.relation === 'father') &&
-      !isResident(character, 'family', m.id),
-  );
-  const siblingsOut = character.family.some(
-    (m) =>
-      (m.relation === 'brother' || m.relation === 'sister') &&
-      memberAge(m, character.age) >= 16 &&
-      !isResident(character, 'family', m.id),
-  );
-  const familyOut = character.family.some(
-    (m) => !isResident(character, 'family', m.id),
-  );
   return (
     <div className="mb-4">
       <div className={MS.label}>Home</div>
@@ -3386,17 +3679,7 @@ function HomeBlock({
           You own {owned.charAt(0).toLowerCase() + owned.slice(1)}.
         </div>
       )}
-      {residents.length > 0 && (
-        <div className="mt-1 divide-y divide-line">
-          {residents.map((r) => (
-            <div key={`${r.scope}:${r.id}`} className="py-2 text-left">
-              <div className="text-sm font-semibold text-ink">{cap(r.label)}</div>
-              <div className="mt-0.5 text-[13px] text-ink-dim">{r.sub}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      {character.age >= 18 && (
+      {character.age >= 18 && !character.serving && (
         <button
           onClick={onMarket}
           className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
@@ -3446,40 +3729,14 @@ function HomeBlock({
           </div>
         </>
       )}
-      {movedIn && parentsOut && (
+      {movedIn && !character.serving && (
         <button
-          onClick={() => inviteFamily('parents')}
+          onClick={onInvite}
           className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
         >
-          Ask your parents
+          Invite to move in
         </button>
       )}
-      {movedIn && siblingsOut && (
-        <button
-          onClick={() => inviteFamily('siblings')}
-          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
-        >
-          Ask your siblings
-        </button>
-      )}
-      {movedIn && familyOut && (
-        <button
-          onClick={() => inviteFamily('all')}
-          className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
-        >
-          Ask the whole family
-        </button>
-      )}
-      {movedIn &&
-        petsOut.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => takeInPet(p.id)}
-            className={`${MS.ghostBtn} mt-2.5 w-full py-2.5 text-[15px]`}
-          >
-            Take in {p.petName ?? p.name}
-          </button>
-        ))}
     </div>
   );
 }
@@ -3560,6 +3817,7 @@ function HouseBody({
   onResidents,
   onSell,
   onRent,
+  onInvite,
   onBack,
 }: {
   character: Character;
@@ -3567,6 +3825,7 @@ function HouseBody({
   onResidents: () => void;
   onSell: () => void;
   onRent: () => void;
+  onInvite: () => void;
   onBack: () => void;
 }) {
   const moveIn = useGame((s) => s.moveIn);
@@ -3645,6 +3904,14 @@ function HouseBody({
         >
           Residents{residents.length > 0 ? ` (${residents.length})` : ''}
         </button>
+        {prop === 'home' && lived && !character.serving && (
+          <button
+            onClick={onInvite}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+          >
+            Invite to move in
+          </button>
+        )}
         {prop === 'home' &&
           (lived ? (
             <button
@@ -3690,6 +3957,106 @@ function HouseBody({
 }
 
 /** Everyone under your roof, closeness and all, like a class list. */
+function InviteBody({
+  character,
+  onBack,
+}: {
+  character: Character;
+  onBack: () => void;
+}) {
+  const inviteHome = useGame((s) => s.inviteHome);
+  const inviteFamily = useGame((s) => s.inviteFamily);
+  const takeInPet = useGame((s) => s.takeInPet);
+  const movedIn = character.home?.movedIn ?? false;
+  if (!movedIn) {
+    return (
+      <button onClick={onBack} className={`${MS.ghostBtn} w-full py-2.5`}>
+        Nevermind
+      </button>
+    );
+  }
+  const kin = character.family.filter((m) => !isResident(character, 'family', m.id));
+  const friends = character.contacts.filter(
+    (m) => m.kind !== 'pet' && !isResident(character, 'contact', m.id),
+  );
+  const pets = character.contacts.filter(
+    (m) => m.kind === 'pet' && !isResident(character, 'pet', m.id),
+  );
+  const parentsOut = kin.some((m) => m.relation === 'mother' || m.relation === 'father');
+  const siblingsOut = kin.some(
+    (m) =>
+      (m.relation === 'brother' || m.relation === 'sister') &&
+      memberAge(m, character.age) >= 16,
+  );
+  return (
+    <div>
+      <div className={`${MS.label} mb-2`}>Invite to move in</div>
+      <div className="space-y-2">
+        {parentsOut && (
+          <button
+            onClick={() => inviteFamily('parents')}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+          >
+            Parents
+          </button>
+        )}
+        {siblingsOut && (
+          <button
+            onClick={() => inviteFamily('siblings')}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+          >
+            Siblings
+          </button>
+        )}
+        {kin.length > 0 && (
+          <button
+            onClick={() => inviteFamily('all')}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+          >
+            Whole family
+          </button>
+        )}
+        {kin.map((m) => (
+          <button
+            key={m.id}
+            disabled={!canInviteHome(character, m, false)}
+            onClick={() => inviteHome('family', m.id)}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px] disabled:cursor-not-allowed disabled:opacity-40`}
+          >
+            {cap(kinshipRef(m, character.family))}
+          </button>
+        ))}
+        {friends.map((m) => (
+          <button
+            key={m.id}
+            disabled={!canInviteHome(character, m, true)}
+            onClick={() => inviteHome('contact', m.id)}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px] disabled:cursor-not-allowed disabled:opacity-40`}
+          >
+            {cap(contactRef(m))}
+          </button>
+        ))}
+        {pets.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => takeInPet(p.id)}
+            className={`${MS.ghostBtn} w-full py-2.5 text-[15px]`}
+          >
+            Take in {p.petName ?? p.name}
+          </button>
+        ))}
+        {kin.length === 0 && friends.length === 0 && pets.length === 0 && (
+          <div className="py-2.5 text-[13px] text-ink-dim">No one yet.</div>
+        )}
+      </div>
+      <button onClick={onBack} className={`${MS.ghostBtn} mt-2.5 w-full py-2.5`}>
+        Nevermind
+      </button>
+    </div>
+  );
+}
+
+/** Everyone under your roof, closeness and all, like a class list. */
 function MatesBody({
   character,
   prop,
@@ -3711,6 +4078,11 @@ function MatesBody({
     <div>
       <div className={`${MS.label}`}>Residents</div>
       <div className="mt-1 divide-y divide-line">
+        {(residents.length === 0 && tenants.length === 0) && (
+          <div className="py-2.5 text-[13px] text-ink-dim">
+            {prop === 'home' && character.home?.movedIn ? 'You live here alone.' : 'No one yet.'}
+          </div>
+        )}
         {residents.map((r) => (
           <div key={`${r.scope}:${r.id}`} className="py-2.5 text-left">
             <div className="text-sm font-semibold text-ink">{cap(r.label)}</div>
@@ -3902,8 +4274,8 @@ function AssetsBody({  character,
   onHouse,
 }: {
   character: Character;
-  step: 'list' | 'item' | 'gift' | 'drive' | 'houses' | 'house' | 'mates' | 'sell' | 'rent';
-  setStep: (step: 'list' | 'item' | 'gift' | 'drive' | 'houses' | 'house' | 'mates' | 'sell' | 'rent') => void;
+  step: 'list' | 'item' | 'gift' | 'drive' | 'houses' | 'house' | 'mates' | 'sell' | 'rent' | 'invite';
+  setStep: (step: 'list' | 'item' | 'gift' | 'drive' | 'houses' | 'house' | 'mates' | 'sell' | 'rent' | 'invite') => void;
   selected: number | null;
   setSelected: (idx: number | null) => void;
   houseProp: string | null;
@@ -3915,7 +4287,7 @@ function AssetsBody({  character,
   const eatItem = useGame((s) => s.eatItem);
   const takeDrive = useGame((s) => s.takeDrive);
   const belongings = character.belongings ?? [];
-  const people: { scope: 'family' | 'contact'; id: string; label: string }[] = [
+  const people: { scope: 'family' | 'contact' | 'child'; id: string; label: string }[] = [
     ...character.family.map((m) => ({
       scope: 'family' as const,
       id: m.id,
@@ -3928,6 +4300,11 @@ function AssetsBody({  character,
         id: m.id,
         label: contactRef(m),
       })),
+    ...(character.children ?? []).map((k) => ({
+      scope: 'child' as const,
+      id: k.id,
+      label: childRef(k),
+    })),
   ];
   const [recipient, setRecipient] = useState('');
   const current = selected !== null ? (belongings[selected] ?? null) : null;
@@ -3953,7 +4330,7 @@ function AssetsBody({  character,
           disabled={!target}
           onClick={() => {
             const cut = target.indexOf(':');
-            const scope = target.slice(0, cut) as 'family' | 'contact';
+            const scope = target.slice(0, cut) as 'family' | 'contact' | 'child';
             const pid = target.slice(cut + 1);
             if (pid) giftItem(selected, scope, pid);
             setSelected(null);
@@ -3995,6 +4372,7 @@ function AssetsBody({  character,
         onResidents={() => setStep('mates')}
         onSell={() => setStep('sell')}
         onRent={() => setStep('rent')}
+        onInvite={() => setStep('invite')}
         onBack={() => setStep('list')}
       />
     );
@@ -4010,6 +4388,10 @@ function AssetsBody({  character,
 
   if (step === 'rent' && houseProp !== null) {
     return <RentBody character={character} prop={houseProp} onBack={() => setStep('house')} />;
+  }
+
+  if (step === 'invite') {
+    return <InviteBody character={character} onBack={() => setStep('list')} />;
   }
 
   if (step === 'item' && selected !== null && currentItem) {
@@ -4078,6 +4460,7 @@ function AssetsBody({  character,
         character={character}
         onMarket={() => setStep('houses')}
         onHouse={onHouse}
+        onInvite={() => setStep('invite')}
       />
       <div className="flex items-baseline justify-between border-t border-line pt-3">
         <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-dim">

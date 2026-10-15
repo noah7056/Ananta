@@ -19,6 +19,8 @@ export type ActivityKey =
   | 'meditate'
   | 'voice'
   | 'modelling'
+  | 'drawing'
+  | 'writing'
   | 'salon'
   | 'news'
   | 'beg';
@@ -29,7 +31,7 @@ export type ActivityKey =
  * were born with — so what comes naturally is something you discover
  * by playing, not something you pick.
  */
-export const TRAINABLE: ActivityKey[] = ['voice', 'modelling'];
+export const TRAINABLE: ActivityKey[] = ['voice', 'modelling', 'drawing', 'writing'];
 
 export interface ActivityDef {
   key: ActivityKey;
@@ -52,6 +54,12 @@ export interface ActivityDef {
   eras?: Partial<Record<EraId, { text: string; journal: string; notice: string }>>;
   /** free while studying, costs once you have finished */
   paidAfterSchool?: boolean;
+  /**
+   * a taught course: grouped under the Courses menu rather than
+   * listed on its own, capped yearly, and earning its certificate
+   * at 100 skill. `cert` matches a creative job's requiresCertificate.
+   */
+  course?: { cert: string; certName: string };
 }
 
 /** A row with its era wording already applied. */
@@ -68,7 +76,7 @@ export const ACTIVITIES: ActivityDef[] = [
     text: 'Take a walk',
     journal: 'You went for a walk.',
     notice: 'The hours go by and you feel better for them.',
-    stats: { happiness: 4, health: 1, energy: 3 },
+    stats: { happiness: 4, health: 1, energy: 4 },
     minAge: 4,
     eras: {
       'ancient-world': {
@@ -153,7 +161,7 @@ export const ACTIVITIES: ActivityDef[] = [
     text: 'Tend the garden',
     journal: 'You spent the year in the garden.',
     notice: 'Nothing dramatic happens. You are better for it anyway.',
-    stats: { happiness: 5, health: 2, energy: 1 },
+    stats: { happiness: 5, health: 2, energy: 2 },
     minAge: 6,
     eras: {
       'ancient-world': {
@@ -215,7 +223,7 @@ export const ACTIVITIES: ActivityDef[] = [
     text: 'Go to the library',
     journal: 'You spent the year in the library.',
     notice: 'A whole winter indoors with other people’s problems.',
-    stats: { smarts: 5, happiness: 2, energy: 1 },
+    stats: { smarts: 5, happiness: 2, energy: 2 },
     minAge: 7,
     eras: {
       'ancient-world': {
@@ -241,7 +249,7 @@ export const ACTIVITIES: ActivityDef[] = [
     text: 'Meditate',
     journal: 'You spent the year sitting quietly.',
     notice: 'An hour a day of doing nothing on purpose.',
-    stats: { happiness: 5, health: 1, energy: 4 },
+    stats: { happiness: 5, health: 2, energy: 6 },
     minAge: 10,
     eras: {
       medieval: {
@@ -272,6 +280,7 @@ export const ACTIVITIES: ActivityDef[] = [
     cost: 2,
     paidAfterSchool: true,
     progressRate: 1.6,
+    course: { cert: 'cert-voice', certName: 'Singing' },
     eras: {
       'ancient-world': {
         text: 'Learn declamation',
@@ -301,6 +310,7 @@ export const ACTIVITIES: ActivityDef[] = [
     minAge: 12,
     paidAfterSchool: true,
     progressRate: 1.6,
+    course: { cert: 'cert-modelling', certName: 'Modelling' },
     eras: {
       industrial: {
         text: 'Sit for an artist',
@@ -311,6 +321,76 @@ export const ACTIVITIES: ActivityDef[] = [
         text: 'Take modelling lessons',
         journal: 'You took modelling lessons.',
         notice: 'A photographer’s studio, a hard chair, and a very long exposure.',
+      },
+    },
+  },
+  {
+    key: 'drawing',
+    group: 'mind',
+    text: 'Take drawing lessons',
+    journal: 'You took drawing lessons.',
+    notice: 'Your hand learns what your eye already knew.',
+    stats: { smarts: 2, happiness: 3 },
+    minAge: 8,
+    cost: 2,
+    paidAfterSchool: true,
+    progressRate: 1.6,
+    course: { cert: 'cert-drawing', certName: 'Drawing' },
+    eras: {
+      'ancient-world': {
+        text: 'Learn fresco',
+        journal: 'You learned to paint wet plaster.',
+        notice: 'Pigment, lime, and a wall that will outlive you.',
+      },
+      medieval: {
+        text: 'Learn illumination',
+        journal: 'You learned to illuminate manuscripts.',
+        notice: 'Gold leaf and a very steady hand.',
+      },
+      'age-of-sail': {
+        text: 'Sketch the harbour',
+        journal: 'You sketched ships in the harbour.',
+        notice: 'Masts and rigging in charcoal lines.',
+      },
+      industrial: {
+        text: 'Life drawing',
+        journal: 'You drew from life.',
+        notice: 'An hour of looking properly.',
+      },
+    },
+  },
+  {
+    key: 'writing',
+    group: 'mind',
+    text: 'Take writing lessons',
+    journal: 'You took writing lessons.',
+    notice: 'A sentence finally does what you told it to.',
+    stats: { smarts: 3, happiness: 2 },
+    minAge: 10,
+    cost: 2,
+    paidAfterSchool: true,
+    progressRate: 1.6,
+    course: { cert: 'cert-writing', certName: 'Writing' },
+    eras: {
+      'ancient-world': {
+        text: 'Learn letters',
+        journal: 'You learned letters and rhetoric.',
+        notice: 'The stylus obeys more often now.',
+      },
+      medieval: {
+        text: 'Copy manuscripts',
+        journal: 'You copied manuscripts in the scriptorium.',
+        notice: 'Line by line, without a blot.',
+      },
+      'age-of-sail': {
+        text: 'Write pamphlets',
+        journal: 'You wrote pamphlets for the coffee house.',
+        notice: 'Strong opinions, cheap paper.',
+      },
+      industrial: {
+        text: 'Write penny fiction',
+        journal: 'You wrote penny fiction.',
+        notice: 'A cliffhanger a week, without fail.',
       },
     },
   },
@@ -355,6 +435,19 @@ export const ACTIVITIES: ActivityDef[] = [
 /** Begging: low odds per try, but many tries a year. */
 export const BEG_CAP = 6;
 export const BEG_CHANCE = 0.3;
+
+/** Certificate names by id, for job posts and the course menu. */
+export const CERTIFICATES: Record<string, string> = {
+  'cert-voice': 'Singing',
+  'cert-modelling': 'Modelling',
+  'cert-drawing': 'Drawing',
+  'cert-writing': 'Writing',
+};
+
+/** Full certificate label, e.g. "Singing certificate". */
+export function certificateName(certId: string): string {
+  return `${CERTIFICATES[certId] ?? certId} certificate`;
+}
 
 /** The row, with whatever wording this period uses. */
 export function resolveActivity(

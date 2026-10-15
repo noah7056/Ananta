@@ -1,5 +1,5 @@
 import { getEra } from '../data/eras';
-import { epitaph } from '../engine/life';
+import { downloadLife, epitaph } from '../engine/life';
 import { useGame } from '../store/gameStore';
 import { StatsPanel } from './StatBar';
 import { MS } from './theme';
@@ -65,6 +65,12 @@ export function DeathScreen() {
           className={`${MS.primaryBtn} w-full px-10 py-3.5 text-base sm:w-auto`}
         >
           Begin a new life
+        </button>
+        <button
+          onClick={() => downloadLife(character)}
+          className={`${MS.ghostBtn} mt-2.5 w-full px-10 py-3 text-base sm:w-auto`}
+        >
+          Export this life
         </button>
       </div>
     </div>

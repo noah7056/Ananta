@@ -251,7 +251,7 @@ for (const k of CRISES) {
   } as never);
   const ec = enlisted?.character as unknown as Record<string, unknown>;
   if (!enlisted || ec['serving'] !== 'first-world-war') coverage.push('serve sets serving');
-  if (!enlisted || JSON.stringify((ec['belongings'] as string[])) !== '["service-rifle"]') coverage.push('serve issues rifle');
+  if (!enlisted || JSON.stringify((ec['belongings'] as string[])) !== '["service-rifle","army-rations","army-rations"]') coverage.push('serve issues rifle');
   if (!enlisted || (ec['stashedBelongings'] as string[]).length !== 2) coverage.push('serve stashes');
   if (!enlisted || (ec['contacts'] as unknown[]).length !== 0) coverage.push('serve leaks unit to Circle');
   if (!enlisted || (ec['coworkers'] as unknown[]).length !== 5) coverage.push('serve musters unit');

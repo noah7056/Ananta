@@ -127,6 +127,8 @@ export interface Contact {
   orientation?: Orientation;
   /** age when they entered your life; current age = this + your age */
   ageAtMeeting: number;
+  /** your age when they entered your life; they age alongside you */
+  metAtAge?: number;
   /** a name you gave an animal yourself; null until you do */
   petName: string | null;
   /** what they do for a living; shown in the Circle list */
@@ -331,6 +333,10 @@ export interface Character {
    * Determines how fast skillProgress fills. Revealed on first use.
    */
   skillAptitude: Record<string, number>;
+  /** course certificates earned at 100 skill, e.g. "cert-voice" */
+  certificates: string[];
+  /** course sessions taken this year, refilled on each ageUp */
+  coursesThisYear: number;
   /** relatives asked for money this year */
   askedThisYear: string[];
   /** people already flirted with this year */

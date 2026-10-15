@@ -10,11 +10,11 @@ import { clampStats } from './life';
 
 /** Base cost of a year, before the era and the age weigh in. */
 const BASE_DECAY: Stats = {
-  health: 0.4,
+  health: 0.3,
   happiness: 0.3,
   smarts: 0.35,
   looks: 0.5,
-  energy: 0.5,
+  energy: 0.4,
   reputation: 0,
 };
 
@@ -23,11 +23,11 @@ const BASE_DECAY: Stats = {
  * hygiene, no doctors, and disease that was simply a fact of life.
  */
 const ERA_DECAY: Record<EraId, Partial<Stats>> = {
-  'ancient-world': { health: 1.1, looks: 0.4 },
-  medieval: { health: 0.7 },
-  'age-of-sail': { health: 0.8 },
-  industrial: { health: 0.5 },
-  atomic: { health: 0.2 },
+  'ancient-world': { health: 0.8, looks: 0.4 },
+  medieval: { health: 0.5 },
+  'age-of-sail': { health: 0.6 },
+  industrial: { health: 0.35 },
+  atomic: { health: 0.15 },
   'modern-day': { health: 0.05 },
 };
 
@@ -72,13 +72,13 @@ export function yearlyRecovery(
   eraId: EraId,
 ): Partial<Stats> {
   const scale = getEra(eraId).declineRate;
-  if (age >= 25) return { energy: 0.35 * scale };
+  if (age >= 25) return { energy: 0.45 * scale };
   const strength = (25 - age) / 25;
   return {
     health: 0.5 * strength * scale,
     smarts: 0.35 * strength,
     looks: 0.3 * strength,
-    energy: (0.6 * strength + 0.35) * scale,
+    energy: (0.6 * strength + 0.45) * scale,
   };
 }
 

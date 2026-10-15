@@ -230,6 +230,12 @@ export function makeContact(
     kind === 'partner'
       ? pick(PARTNER_ROLES[c.eraId] ?? PARTNER_ROLES['modern-day'], rng)
       : pick(FRIEND_TRADES[c.eraId] ?? FRIEND_TRADES['modern-day'], rng);
+  // someone you meet as a child is a child too, not a grown adult:
+  // they arrive around your own age and grow up alongside you
+  const ageAtMeeting =
+    c.age < 18
+      ? Math.max(4, c.age - 2 + Math.floor(rng() * 5))
+      : MEETING_AGE + Math.floor(rng() * 16);
   return {
     id,
     name,
@@ -239,7 +245,8 @@ export function makeContact(
     status,
     trade,
     wealth: rollPartnerWealth(rng),
-    ageAtMeeting: MEETING_AGE + Math.floor(rng() * 16),
+    ageAtMeeting,
+    metAtAge: c.age,
     petName: null,
     bond: 50,
     yearsKnown: 0,
@@ -249,7 +256,9 @@ export function makeContact(
 export function contactAge(m: Contact, characterAge: number): number {
   // you were in the same class, so you have always been the same age
   if (m.status === SCHOOL_FRIEND_STATUS) return characterAge;
-  return m.ageAtMeeting + Math.max(0, characterAge - MEETING_AGE);
+  // old saves predate metAtAge: estimate it from how long you have known them
+  const metAt = m.metAtAge ?? Math.max(0, characterAge - m.yearsKnown);
+  return Math.max(0, m.ageAtMeeting + (characterAge - metAt));
 }
 
 /** The status a school friend carries once they are in the Circle. */
@@ -695,8 +704,25 @@ export function driftFamily(c: Character): {
   const family: FamilyMember[] = [];
   const lost: FamilyMember[] = [];
   for (const m of c.family) {
+    const currentAge = m.ageAtBirth + c.age;
+    // studying ends: grown kin move on to work, infants are at home —
+    // the flag must not freeze at birth
+    let status = m.status;
+    if (status === 'studying' && currentAge >= 20) {
+      const r = Math.random();
+      if (r < 0.6) {
+        const pool = occupationsFor(c.eraId);
+        status = pool[Math.floor(Math.random() * pool.length)] ?? 'unemployed';
+      } else if (r < 0.8) {
+        status = 'unemployed';
+      } else {
+        status = 'at home';
+      }
+    }
+    if (status === 'studying' && currentAge < 7) status = 'at home';
     const next = {
       ...m,
+      status,
       yearsKnown: m.yearsKnown + 1,
       bond: clampBond(m.bond - YEARLY_FADE),
     };

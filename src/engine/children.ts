@@ -96,6 +96,14 @@ export function pregnancyDecisionEvent(
     };
   }
   const repHit = eraId === 'ancient-world' || eraId === 'medieval' ? -5 : -3;
+  const oldWorld = eraId === 'ancient-world' || eraId === 'medieval';
+  // letting the carrier decide: her choice in later eras, a harder
+  // ask where wives were not consulted — still allowed, still judged
+  const deferText = playerCarries
+    ? `Ask ${partner.name} what to do`
+    : partner.gender === 'Female'
+      ? 'Leave the choice to her'
+      : `Leave the choice to ${partner.gender === 'Male' ? 'him' : 'them'}`;
   return {
     id: `preg-decide-${partner.id}`,
     title: 'With Child',
@@ -124,6 +132,15 @@ export function pregnancyDecisionEvent(
           journal: 'You ended the pregnancy quietly.',
         },
       },
+      {
+        id: 'defer',
+        text: deferText,
+        effects: {
+          stats: oldWorld && !playerCarries ? { happiness: -1, reputation: -1 } : {},
+          result: 'You leave it in their hands.',
+          journal: `You left the choice to ${partner.name}.`,
+        },
+      },
     ],
   };
 }
@@ -147,6 +164,15 @@ export function pregnancyFlowStep(
   }
   const carrier = carrierOf(c, partner);
   if (!carrier) return { character: c, events: [], jobId: null };
+  // deferred to the carrier: closeness tilts them toward keeping;
+  // old-world carriers keep more often
+  if (choiceId === 'defer') {
+    const ancient = c.eraId === 'ancient-world' || c.eraId === 'medieval';
+    const odds = Math.min(0.9, 0.45 + partner.bond / 200 + (ancient ? 0.15 : 0));
+    if (Math.random() >= odds) {
+      return { character: { ...c, pregnancy: null }, events: [], jobId: null };
+    }
+  }
   return {
     character: {
       ...c,

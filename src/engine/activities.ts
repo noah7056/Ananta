@@ -62,11 +62,27 @@ export function availableActivities(
     ? ACTIVITIES.filter((def) => def.key === 'walk' || def.key === 'meditate')
     : c.sentence
     ? ACTIVITIES.filter((def) => def.key === 'meditate')
-    : ACTIVITIES;
+    : ACTIVITIES.filter((def) => !def.course);
   return open.filter((def) => isOpen(def, c)).map((def) => ({
     key: def.key,
     def: resolveActivity(def, era),
   }));
+}
+
+/** Course sessions allowed per year. Past it, lessons barely land. */
+export const COURSES_PER_YEAR = 3;
+
+/** Below this health or energy the cap drops to one. */
+const COURSE_POOR_HEALTH = 45;
+
+export function courseCap(health: number): number {
+  return health < COURSE_POOR_HEALTH ? 1 : COURSES_PER_YEAR;
+}
+
+/** Every course on offer at this age: taught lessons live here, not in the menu. */
+export function coursesFor(c: Character): ActivityDef[] {
+  if (c.serving || c.sentence) return [];
+  return ACTIVITIES.filter((def) => def.course && isOpen(def, c));
 }
 
 /** Is this activity open to someone of this age? */
@@ -91,11 +107,11 @@ export function canAfford(def: ActivityDef, c: Character): boolean {
 }
 
 /**
- * Voice and modelling lessons are asked of the parents while too
- * young to pay: the house's means and their fondness decide.
+ * Taught lessons go on the parents' coin while too young to pay:
+ * the house's means and their fondness decide.
  */
 export function needsParentPayer(def: ActivityDef, c: Character): boolean {
-  if (def.key !== 'voice' && def.key !== 'modelling') return false;
+  if (!def.course) return false;
   if (c.age >= workStartAge(c.eraId)) return false;
   return (def.cost ?? 0) > 0;
 }

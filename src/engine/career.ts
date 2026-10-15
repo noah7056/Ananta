@@ -66,8 +66,9 @@ export function sectorsFor(eraId: EraId): string[] {
 
 /**
  * The posts on offer in a sector that you are old and sharp enough
- * to hold — and degreed enough, where a degree is asked. Anything
- * above your smarts is not shown as available.
+ * to hold — degreed enough where a degree is asked, certificated
+ * where a course certificate is asked. Anything above your smarts
+ * is not shown as available.
  */
 export function jobsInSector(
   eraId: EraId,
@@ -75,13 +76,16 @@ export function jobsInSector(
   age: number,
   smarts: number,
   degrees: string[] = [],
+  certificates: string[] = [],
 ): JobTier[] {
   return JOBS[eraId].filter(
     (j) =>
       j.sector === sector &&
       age >= j.minAge &&
       smarts >= j.smartsRequired &&
-      (!j.requiresDegree || degrees.includes(j.requiresDegree)),
+      (!j.requiresDegree || degrees.includes(j.requiresDegree)) &&
+      (!j.requiresAnyDegree || degrees.length > 0) &&
+      (!j.requiresCertificate || certificates.includes(j.requiresCertificate)),
   );
 }
 
@@ -206,6 +210,7 @@ export function careerStep(
 // the study and shift allowances refill every year
     studiesThisYear: 0,
     shiftsThisYear: 0,
+    coursesThisYear: 0,
     gigsThisYear: 0,
     jobHuntsThisYear: 0,
     begsThisYear: 0,
@@ -298,6 +303,7 @@ Object.assign(character, syncCrew(character));
     character.schoolId !== null &&
     school &&
     school.id !== character.schoolId &&
+    !character.serving &&
     !character.sentence
   ) {
     character.schoolId = school.id;
@@ -346,7 +352,8 @@ Object.assign(character, syncCrew(character));
   }
 
   // Reading for a degree: another year done, or the degree itself.
-  if (character.uniId !== null && !character.sentence) {
+  // Paused while serving or inside: study does not advance at war.
+  if (character.uniId !== null && !character.serving && !character.sentence) {
     const degree = degreeById(character.uniId);
     character.uniYears = (character.uniYears ?? 0) + 1;
     if (!degree || character.uniYears >= degree.years) {
@@ -397,7 +404,7 @@ Object.assign(character, syncCrew(character));
   // be held for a few years and proved at, and standing only tilts
   // the odds; it never carries a year on its own.
   const jobId = character.jobId;
-  if (jobId !== null && character.workedHard && !character.sentence) {
+  if (jobId !== null && character.workedHard && !character.serving && !character.sentence) {
     character.workedHard = false;
     character.jobYears = (character.jobYears ?? 0) + 1;
     const tenure = Math.min(1, character.jobYears / YEARS_BEFORE_RAISE);
@@ -408,6 +415,8 @@ Object.assign(character, syncCrew(character));
         next !== null &&
         character.stats.smarts >= next.smartsRequired &&
         (!next.requiresDegree || (character.degrees ?? []).includes(next.requiresDegree)) &&
+        (!next.requiresAnyDegree || (character.degrees ?? []).length > 0) &&
+        (!next.requiresCertificate || (character.certificates ?? []).includes(next.requiresCertificate)) &&
         (!next.requiresVehicle || ownsVehicle(character));
           character.jobId = promoted ? next.id : jobId;
           // a new post means new faces around it

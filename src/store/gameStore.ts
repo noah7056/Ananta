@@ -49,6 +49,7 @@ import {
   BEG_CAP,
   BEG_CHANCE,
   TRAINABLE,
+  certificateName,
   resolveActivity,
   type ActivityKey,
 } from '../data/activities';
@@ -64,8 +65,10 @@ import {
   effectiveCost,
   canAffordEffective,
   wearHabit,
+  courseCap,
 } from '../engine/activities';
 import { WALK_DURATIONS, WALK_PLACES } from '../data/walks';
+import { PROPOSAL_SPOTS, DATE_SPOTS, dateSpotCost, proposalSpotsFor, dateSpotsFor } from '../data/weddings';
 import { pickWalkEvent, walkEventAs, walkPlacesFor } from '../engine/walks';
 import { BOOKS } from '../data/books';
 import { eligibleBooks } from '../engine/books';
@@ -109,7 +112,7 @@ import {
   viewingEvent,
 } from '../engine/houses';
 import { WARS, type WarDef } from '../data/wars';
-import { draftFor, draftEvent, warFlowStep, warYear, warYearEvent } from '../engine/wars';
+import { draftFor, draftEvent, warFlowStep, warYear, pickWarYearEvent } from '../engine/wars';
 import {
   caughtEvent,
   crimeFlowStep,
@@ -346,7 +349,8 @@ interface GameState {
   /** take an owned vehicle out: how long, where, and with whom */
   takeDrive: (index: number, durationId: string, placeId: string, companion: string) => void;
   /** buy something from a shop; it lands in the belongings */
-  takeShop: (itemId: string) => void;
+  /** buy a belonging; food and cheap goods go up to 5 at a time */
+  takeShop: (itemId: string, qty?: number) => void;
   /** buy a house on the market; the first is home, the rest to let */
   buyHome: (houseId: string) => void;
   /** ask a friend or a relative to live with you; they may not */
@@ -378,7 +382,7 @@ interface GameState {
   /** throw a belonging away */
   discardItem: (index: number) => void;
   /** give a belonging to a relative or a friend */
-  giftItem: (index: number, scope: 'family' | 'contact', id: string) => void;
+  giftItem: (index: number, scope: 'family' | 'contact' | 'child', id: string) => void;
   /** eat an owned food */
   eatItem: (index: number) => void;
   /** beg for food or money; low odds, many tries */
@@ -439,16 +443,16 @@ function giftResult(
   reaction: GiftReaction,
   he: string,
   name: string,
-): { journal: string; notice: string } {
+): { journal: string; notice: string; title: string } {
   switch (reaction) {
     case 'loved':
-      return { journal: ` ${he} was delighted.`, notice: `${he} takes the ${name}, delighted.` };
+      return { journal: ` ${he} was delighted.`, notice: `${he} takes the ${name}, delighted.`, title: 'Delighted' };
     case 'odd':
-      return { journal: ` ${he} found it odd.`, notice: `${he} takes the ${name}, though puzzled.` };
+      return { journal: ` ${he} found it odd.`, notice: `${he} takes the ${name}, though puzzled.`, title: 'Puzzled' };
     case 'disliked':
-      return { journal: ` It missed, and you both know it.`, notice: `${he} takes the ${name}, but it clearly missed.` };
+      return { journal: ` It missed, and you both know it.`, notice: `${he} takes the ${name}, but it clearly missed.`, title: 'Missed' };
     case 'neutral':
-      return { journal: '', notice: `${he} takes the ${name}.` };
+      return { journal: '', notice: `${he} takes the ${name}.`, title: 'Given' };
   }
 }
 
@@ -670,6 +674,26 @@ function jobFlowStep(
     if (choiceId !== 'apply') return null;
     const job = jobForSmarts(c.eraId, c.age, c.stats.smarts);
     if (!job) return null;
+    // posts on wheels need the wheels first: applying without a
+    // vehicle ends in a rejection, like the manual hunt does
+    if (job.requiresVehicle && !ownsVehicle(c)) {
+      return {
+        character: c,
+        events: [
+          {
+            id: 'career-rejected',
+            title: 'Turned Down',
+            description: `The post of ${job.title} in {place} needed someone with their own transport.`,
+            category: 'work',
+            conditions: {},
+            weight: 0,
+            choices: [],
+            effects: { journal: 'You were turned down for the job. They needed someone with their own transport.' },
+          },
+        ],
+        jobId: null,
+      };
+    }
     return {
       character: c,
       events: [interviewEvent(c, job)],
@@ -788,6 +812,9 @@ function loadSaved(): { character: Character; phase: Phase } | null {
         yearsKnown: typeof m.yearsKnown === 'number' ? m.yearsKnown : 0,
       }));
     }
+    // courses arrived later: certificates earned at 100 skill plus the yearly count
+    if (!Array.isArray(character.certificates)) character.certificates = [];
+    if (typeof character.coursesThisYear !== 'number') character.coursesThisYear = 0;
     if (!Array.isArray(character.contacts)) {
       character.contacts = [];
     } else {
@@ -1118,6 +1145,8 @@ export const useGame = create<GameState>((set, get) => ({
       recentWalkEvents: [],
       skillProgress: {},
       skillAptitude: rollAptitudes(),
+      certificates: [],
+      coursesThisYear: 0,
       askedThisYear: [],
       flirtedThisYear: [],
       askedOutThisYear: [],
@@ -1248,6 +1277,7 @@ export const useGame = create<GameState>((set, get) => ({
             gender: k.gender,
             orientation: rollOrientation(),
             ageAtMeeting: 18,
+            metAtAge: c.age,
             petName: null,
             bond: k.bond,
             yearsKnown: k.yearsKnown,
@@ -1543,7 +1573,11 @@ export const useGame = create<GameState>((set, get) => ({
       c = {
         ...c,
         satiety,
-        stats: clampStats({ ...c.stats, health: c.stats.health + (wellFed ? 3 : 0) }),
+        stats: clampStats({
+          ...c.stats,
+          health: c.stats.health + (wellFed ? 3 : 0),
+          energy: (c.stats.energy ?? 70) + (wellFed ? 2 : 0),
+        }),
       };
       if (satiety <= 0) {
         const entry: LogEntry = {
@@ -1568,8 +1602,27 @@ export const useGame = create<GameState>((set, get) => ({
       }
     }
     if (c.serving) {
-      // the army feeds its own: hunger first, then rations on top
-      c = { ...c, satiety: Math.min(100, (c.satiety ?? 80) + 35) };
+      // the army issues ration packs instead of feeding you outright:
+      // two packs a year, eaten by hand from the belongings. Starving
+      // with empty hands still finds one emergency pack, journaled.
+      const hasEdible = (c.belongings ?? []).some((id) => itemById(id)?.sates);
+      c = {
+        ...c,
+        belongings: [...(c.belongings ?? []), 'army-rations', 'army-rations'],
+      };
+      if ((c.satiety ?? 0) <= 0 && !hasEdible) {
+        const entry: LogEntry = {
+          age: c.age,
+          year: c.birthYear + c.age,
+          text: 'The supply line failed, but a mate shared his rations with you.',
+          kind: 'event',
+        };
+        c = {
+          ...c,
+          belongings: [...c.belongings, 'army-rations'],
+          log: [...c.log, entry],
+        };
+      }
     }
 
     // Rich houses sometimes put a licensed child on wheels themselves.
@@ -1721,6 +1774,8 @@ export const useGame = create<GameState>((set, get) => ({
     // Sickness in the household can spread to the character, unfelt at first.
     const spread = spreadFromHousehold(c);
     let picked: LifeEvent | null = null;
+    // extra war reports (wound notices) queue ahead of the year's orders
+    const warExtras: LifeEvent[] = [];
     let quiet = false;
     // the bad years strike first: plague and flu take whoever is alive
     const crisis = crisisFor(c, c.birthYear + c.age);
@@ -1748,7 +1803,8 @@ export const useGame = create<GameState>((set, get) => ({
         c = { ...c, log: [...c.log, entry] };
       }
     } else if (c.serving) {
-      // deployed years belong to the war: danger first, orders after
+      // deployed years belong to the war: danger first, orders after.
+      // hits land as their own popup, so nothing bleeds quietly
       const front = warYear(c);
       c = front.character;
       if (front.died) {
@@ -1758,7 +1814,19 @@ export const useGame = create<GameState>((set, get) => ({
         return;
       }
       const servingWar = WARS.find((w) => w.id === c.serving);
-      if (servingWar) picked = warYearEvent(servingWar);
+      if (front.hit !== null) {
+        warExtras.push({
+          id: `war-hit-${c.age}`,
+          title: 'Hit',
+          description: `${front.hit.cause} You lost ${front.hit.amount} health.`,
+          category: 'fate',
+          conditions: {},
+          weight: 0,
+          choices: [],
+          effects: { journal: `${front.hit.cause} You lost ${front.hit.amount} health.` },
+        });
+      }
+      if (servingWar) picked = pickWarYearEvent(servingWar);
     } else if (drafted && war) {
       picked = draftEvent(war);
     } else if (spread) {
@@ -2018,6 +2086,7 @@ export const useGame = create<GameState>((set, get) => ({
     // Career events wait behind this year's random event.
     const career = step.events;
     const queue: LifeEvent[] = [
+      ...warExtras,
       ...(picked ? [picked] : []),
       ...(childAsk ? [childAsk] : []),
       ...(spouseAsk ? [spouseAsk] : []),
@@ -2243,7 +2312,8 @@ export const useGame = create<GameState>((set, get) => ({
     const def = AILMENTS[id];
     if (!def || def.incurable) return;
     const era = getEra(character.eraId);
-    const cost = def.cureCost * era.moneyScale;
+    // the army patches up its own: no fee while serving
+    const cost = character.serving ? 0 : def.cureCost * era.moneyScale;
     if (character.money < cost) return;
     const child = ownerId
       ? (character.children ?? []).find((k) => k.id === ownerId) ?? null
@@ -2275,7 +2345,8 @@ export const useGame = create<GameState>((set, get) => ({
       children,
       stats: clampStats({
         ...character.stats,
-        health: child ? character.stats.health : character.stats.health + 5,
+        health: child ? character.stats.health : character.stats.health + 6,
+        energy: child ? (character.stats.energy ?? 70) : (character.stats.energy ?? 70) + 2,
       }),
       log: [...character.log, entry],
     };
@@ -2951,7 +3022,7 @@ text: partingLine(me.name, me.kind),
         ...character.stats,
         smarts: character.stats.smarts + (gain ? 5 : 1),
         health: character.stats.health - (gain ? 0 : 1) - (double ? 1 : 0),
-        energy: (character.stats.energy ?? 70) - (gain ? 2 : 6) - (double ? 2 : 0),
+        energy: (character.stats.energy ?? 70) - (gain ? 1 : 4) - (double ? 1 : 0),
         happiness: character.stats.happiness - (double ? 3 : 0),
       }),
       performance: clampPerformance(character.performance + (gain ? 12 : 3)),
@@ -2975,6 +3046,13 @@ text: partingLine(me.name, me.kind),
   quitUni: () => {
     const { character } = get();
     if (!character || !character.alive || !character.uniId) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Study', eyebrow: 'War', text: 'There is a war on. That will have to wait.' },
+      });
+      return;
+    }
     const uni = UNI_NAMES[character.eraId];
     const entry: LogEntry = {
       age: character.age,
@@ -3474,9 +3552,11 @@ text: partingLine(me.name, me.kind),
       return;
     }
     const duration = WALK_DURATIONS.find((d) => d.id === durationId);
-    const place = WALK_PLACES.find((p) => p.id === placeId);
+    const place = DATE_SPOTS.find((p) => p.id === placeId);
     if (!duration || !place) return;
-    if (!walkPlacesFor(character).some((p) => p.id === placeId)) return;
+    if (!dateSpotsFor(character).some((p) => p.id === placeId)) return;
+    const cost = dateSpotCost(place, character);
+    if (character.money < cost) return;
 
     // a bad patch of it and they may not feel like going out
     const refusal =
@@ -3504,7 +3584,7 @@ text: partingLine(me.name, me.kind),
       });
       return;
     }
-    const boost = Math.round(25 * duration.scale);
+    const boost = Math.round(25 * duration.scale) + place.bonus;
     const moved: Contact = {
       ...me,
       bond: Math.max(0, Math.min(100, me.bond + boost)),
@@ -3519,6 +3599,7 @@ text: partingLine(me.name, me.kind),
     };
     const c: Character = {
       ...character,
+      money: character.money - cost,
       contacts: character.contacts.map((m) => (m.id === contactId ? moved : m)),
       datedThisYear: [...character.datedThisYear, contactId],
       log: [...character.log, entry],
@@ -3636,8 +3717,8 @@ text: partingLine(me.name, me.kind),
     const belongings = [...(character.belongings ?? [])];
     const ridx = belongings.indexOf(itemId);
     if (ridx < 0) return;
-    const place = WALK_PLACES.find((p) => p.id === placeId);
-    if (!place || !walkPlacesFor(character).some((p) => p.id === placeId)) return;
+    const place = PROPOSAL_SPOTS.find((p) => p.id === placeId);
+    if (!place || !proposalSpotsFor(character).some((p) => p.id === placeId)) return;
     const where = place.text.charAt(0).toLowerCase() + place.text.slice(1);
     const he = cap(pronoun(me.gender, 'subj'));
     const chance = Math.min(0.95, 0.25 + me.bond / 200 + ringBonus(item));
@@ -4310,7 +4391,8 @@ text: partingLine(me.name, me.kind),
     const { character } = get();
     if (!character) return;
     const era = getEra(character.eraId);
-    const fee = 2 * era.moneyScale;
+    // the army patches up its own: no fee while serving
+    const fee = character.serving ? 0 : 2 * era.moneyScale;
     if (character.money < fee) return;
     const hidden = character.ailments.filter(
       (a) => a.ownerId === null && !a.known,
@@ -4319,7 +4401,9 @@ text: partingLine(me.name, me.kind),
     const revealed =
       found.length > 0
         ? `The doctor examines you. They inform you that you are suffering from ${joinList(found.map((n) => `the ${n.toLowerCase()}`))}.`
-        : null;
+        : character.stats.health < 50
+          ? 'The doctor examines you. Nothing particular ails you, but you are worn down and need rest.'
+          : null;
     const journalText = found.length > 0
       ? `You were diagnosed with ${joinList(found.map((n) => `the ${n.toLowerCase()}`))}.`
       : `You went for a medical checkup.`;
@@ -4329,6 +4413,10 @@ text: partingLine(me.name, me.kind),
       ailments: character.ailments.map((a) =>
         a.ownerId === null ? { ...a, known: true } : a,
       ),
+      stats: clampStats({
+        ...character.stats,
+        health: character.stats.health + 2,
+      }),
       log: [
         ...character.log,
         {
@@ -4417,29 +4505,54 @@ text: partingLine(me.name, me.kind),
     const cost = effectiveCost(def, character);
     const isTrainable = TRAINABLE.includes(key);
     const firstTime = isTrainable && !(key in character.skillProgress);
-    const progressGain = isTrainable ? skillProgressGain(def, character) : 0;
+    // courses run a yearly cap like studies and shifts: past it the
+    // lesson barely lands and the extra hours wear you down
+    const isCourse = !!def.course;
+    const overCap =
+      isCourse &&
+      (character.coursesThisYear ?? 0) >=
+        courseCap(Math.min(character.stats.health, character.stats.energy ?? 70));
+    const fullProgress = isTrainable ? skillProgressGain(def, character) : 0;
+    const progressGain = overCap ? Math.min(1, fullProgress) : fullProgress;
     const newProgress = isTrainable
       ? Math.min(100, (character.skillProgress[key] ?? 0) + progressGain)
       : 0;
+    // a finished course earns its certificate: creative posts ask for it
+    const cert = def.course?.cert;
+    const earnedCert =
+      isCourse &&
+      !!cert &&
+      newProgress >= 100 &&
+      !(character.certificates ?? []).includes(cert);
     const entry: LogEntry = {
       age: character.age,
       year: character.birthYear + character.age,
       text: renderText(resolved.journal, character, placeNameOf(character)),
       kind: 'event',
     };
+    const certEntry: LogEntry = {
+      age: character.age,
+      year: character.birthYear + character.age,
+      text: `You earned your ${def.course?.certName ?? 'course'} certificate.`,
+      kind: 'event',
+    };
     const c: Character = {
       ...character,
       stats: clampStats({
         ...character.stats,
-        health: character.stats.health + (gain.health ?? 0),
+        health: character.stats.health + (gain.health ?? 0) - (overCap ? 1 : 0),
         happiness: character.stats.happiness + (gain.happiness ?? 0),
         smarts: character.stats.smarts + (gain.smarts ?? 0),
         looks: character.stats.looks + (gain.looks ?? 0),
-        energy: (character.stats.energy ?? 70) + (gain.energy ?? 0),
+        energy: (character.stats.energy ?? 70) + (gain.energy ?? 0) - (overCap ? 4 : 0),
         reputation: (character.stats.reputation ?? 50) + (gain.reputation ?? 0),
       }),
       money: character.money - (lessonAsk ? 0 : cost),
       activitiesUsed: [...character.activitiesUsed, key],
+      coursesThisYear: (character.coursesThisYear ?? 0) + (isCourse ? 1 : 0),
+      certificates: earnedCert
+        ? [...(character.certificates ?? []), cert!]
+        : (character.certificates ?? []),
       // wearing the habit out is what stops it being spammed
       activityHeat: {
         ...character.activityHeat,
@@ -4449,16 +4562,20 @@ text: partingLine(me.name, me.kind),
       skillProgress: isTrainable
         ? { ...character.skillProgress, [key]: newProgress }
         : character.skillProgress,
-      log: [...character.log, entry],
+      log: [...character.log, entry, ...(earnedCert ? [certEntry] : [])],
     };
     persist(c, 'playing');
-    const noticeText = firstTime
-      ? `You discover you${character.skillAptitude[key] >= 1.2 ? ' have a natural aptitude for' : character.skillAptitude[key] <= 0.6 ? ' struggle with' : ' have some talent for'} this.`
-      : resolved.notice;
+    const noticeText = earnedCert
+      ? `You earned your ${def.course?.certName ?? 'course'} certificate. Creative posts will ask for it.`
+      : firstTime
+        ? `You discover you${character.skillAptitude[key] >= 1.2 ? ' have a natural aptitude for' : character.skillAptitude[key] <= 0.6 ? ' struggle with' : ' have some talent for'} this.`
+        : overCap
+          ? 'Another lesson on top of the rest. Little of it sticks.'
+          : resolved.notice;
     set({
       character: c,
       section: null,
-      notice: { title: resolved.text, eyebrow: payerRef ?? 'Action', text: noticeText },
+      notice: { title: earnedCert ? 'Certificate' : resolved.text, eyebrow: payerRef ?? 'Action', text: noticeText },
     });
   },
 
@@ -4661,6 +4778,32 @@ text: partingLine(me.name, me.kind),
     }
     const cost = licenceCost(character);
     if (character.money < cost) return;
+    // the test itself: sharpness helps, nerves decide — failing costs
+    // the fee and the year, passing takes the flag
+    const passChance = Math.min(0.9, 0.35 + character.stats.smarts / 150);
+    if (Math.random() >= passChance) {
+      const c: Character = {
+        ...character,
+        money: character.money - cost,
+        stats: clampStats({ ...character.stats, happiness: character.stats.happiness - 2 }),
+        log: [
+          ...character.log,
+          {
+            age: character.age,
+            year: character.birthYear + character.age,
+            text: 'You failed the driving test.',
+            kind: 'event',
+          } as LogEntry,
+        ],
+      };
+      persist(c, 'playing');
+      set({
+        character: c,
+        section: null,
+        notice: { title: 'Driving licence', text: 'You failed the test. The fee is gone with it.' },
+      });
+      return;
+    }
     const c: Character = {
       ...character,
       money: character.money - cost,
@@ -4889,7 +5032,7 @@ text: partingLine(me.name, me.kind),
     });
   },
 
-  takeShop: (itemId) => {
+  takeShop: (itemId, qty = 1) => {
     const { character } = get();
     if (!character || !character.alive) return;
     if (get().activeEvent) return;
@@ -4907,7 +5050,11 @@ text: partingLine(me.name, me.kind),
       return;
     }
     if (isOwnedOut(item, character)) return;
-    const cost = shopCost(item, character);
+    // bundles: food and cheap stackables go 1–5 at a time; durables,
+    // wheels and rings stay single. A child's errand is always one.
+    const stackable = !!item.sates || (item.cost <= 4 && !item.once && !item.vehicle && !item.ring);
+    const n = stackable ? Math.max(1, Math.min(5, Math.floor(qty) || 1)) : 1;
+    const cost = shopCost(item, character) * n;
     if (character.money < cost) return;
     // bought for a waiting child: straight to them, never to the shelf
     const errand = get().pendingChildShop;
@@ -4956,21 +5103,23 @@ text: partingLine(me.name, me.kind),
       ...character,
       stats: clampStats({
         ...character.stats,
-        health: character.stats.health + (item.stats?.health ?? 0),
-        happiness: character.stats.happiness + (item.stats?.happiness ?? 0),
-        smarts: character.stats.smarts + (item.stats?.smarts ?? 0),
-        looks: character.stats.looks + (item.stats?.looks ?? 0),
-        energy: (character.stats.energy ?? 70) + (item.stats?.energy ?? 0),
-        reputation: (character.stats.reputation ?? 50) + (item.stats?.reputation ?? 0),
+        health: character.stats.health + (item.stats?.health ?? 0) * n,
+        happiness: character.stats.happiness + (item.stats?.happiness ?? 0) * n,
+        smarts: character.stats.smarts + (item.stats?.smarts ?? 0) * n,
+        looks: character.stats.looks + (item.stats?.looks ?? 0) * n,
+        energy: (character.stats.energy ?? 70) + (item.stats?.energy ?? 0) * n,
+        reputation: (character.stats.reputation ?? 50) + (item.stats?.reputation ?? 0) * n,
       }),
       money: character.money - cost,
-      belongings: [...(character.belongings ?? []), item.id],
+      belongings: [...(character.belongings ?? []), ...Array(n).fill(item.id)],
       log: [
         ...character.log,
         {
           age: character.age,
           year: character.birthYear + character.age,
-          text: renderText(item.journal, character, placeNameOf(character)),
+          text: n > 1
+            ? `${renderText(item.journal, character, placeNameOf(character))} (x${n})`
+            : renderText(item.journal, character, placeNameOf(character)),
           kind: 'event',
         } as LogEntry,
       ],
@@ -4979,7 +5128,7 @@ text: partingLine(me.name, me.kind),
     set({
       character: c,
       section: null,
-      notice: { title: item.text, eyebrow: shop.text, text: item.notice },
+      notice: { title: n > 1 ? `${item.text} (x${n})` : item.text, eyebrow: shop.text, text: item.notice },
     });
   },
 
@@ -4987,7 +5136,6 @@ text: partingLine(me.name, me.kind),
     const { character } = get();
     if (!character || !character.alive) return;
     if (get().activeEvent) return;
-    if (character.home) return;
     if (character.age < 18) return;
     const house = houseById(character.eraId, houseId);
     if (!house) return;
@@ -5059,6 +5207,13 @@ text: partingLine(me.name, me.kind),
     const { character } = get();
     if (!character || !character.alive) return;
     if (get().activeEvent) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', eyebrow: 'War', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
     // homeless owners move; moving between roofs is not done.
     if (character.home?.movedIn) return;
     const houseId =
@@ -5140,6 +5295,13 @@ text: partingLine(me.name, me.kind),
     const { character } = get();
     if (!character || !character.alive) return;
     if (get().activeEvent) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', eyebrow: 'War', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
     if (!character.home?.movedIn) return;
     const entry: LogEntry = {
       age: character.age,
@@ -5164,6 +5326,13 @@ text: partingLine(me.name, me.kind),
     const { character } = get();
     if (!character || !character.alive) return;
     if (get().activeEvent) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', eyebrow: 'War', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
     const houseId =
       prop === 'home' ? character.home?.houseId : rentalByUid(character, prop)?.houseId;
     if (!houseId) return;
@@ -5227,6 +5396,13 @@ text: partingLine(me.name, me.kind),
     const { character } = get();
     if (!character || !character.alive) return;
     if (get().activeEvent) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', eyebrow: 'War', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
     const owed =
       prop === 'home'
         ? (character.home?.taxOwed ?? 0)
@@ -5307,6 +5483,13 @@ text: partingLine(me.name, me.kind),
     const { character } = get();
     if (!character || !character.alive) return;
     if (get().activeEvent) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', eyebrow: 'War', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
     const already =
       prop === 'home'
         ? !character.home || character.home.forRent
@@ -5345,6 +5528,13 @@ text: partingLine(me.name, me.kind),
     const { character } = get();
     if (!character || !character.alive) return;
     if (get().activeEvent) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Too far', eyebrow: 'War', text: 'You are at war, far from them.' },
+      });
+      return;
+    }
     const open =
       prop === 'home'
         ? character.home?.forRent
@@ -5945,6 +6135,36 @@ text: partingLine(me.name, me.kind),
     const [removed] = belongings.splice(index, 1);
     const item = removed ? itemById(removed) : undefined;
     const name = item?.text ?? 'it';
+    // throwing away the issued rifle at the front is desertion-adjacent:
+    // it lands, it is journaled, and the front remembers it
+    if (character.serving && removed === 'service-rifle') {
+      const c: Character = {
+        ...character,
+        belongings,
+        flags: [...character.flags, 'unarmed'],
+        stats: clampStats({
+          ...character.stats,
+          reputation: character.stats.reputation - 15,
+          happiness: character.stats.happiness - 5,
+        }),
+        log: [
+          ...character.log,
+          {
+            age: character.age,
+            year: character.birthYear + character.age,
+            text: 'You threw away your service rifle. The unit will not forget it.',
+            kind: 'event',
+          } as LogEntry,
+        ],
+      };
+      persist(c, 'playing');
+      set({
+        character: c,
+        section: null,
+        notice: { title: 'Disarmed', eyebrow: 'War', text: 'You threw away your rifle. That will follow you.' },
+      });
+      return;
+    }
     const c: Character = {
       ...character,
       belongings,
@@ -6044,7 +6264,32 @@ text: partingLine(me.name, me.kind),
         return;
       }
       persist(c, 'playing');
-      set({ character: c, section: null, notice: { title: 'Given', eyebrow: cap(ref), text: said.notice } });
+      set({ character: c, section: null, notice: { title: said.title, eyebrow: cap(ref), text: said.notice } });
+      return;
+    }
+
+    if (scope === 'child') {
+      const idx = (character.children ?? []).findIndex((k) => k.id === id);
+      if (idx < 0) return;
+      const kid = (character.children ?? [])[idx]!;
+      const ref = childRef(kid);
+      const reaction = giftReaction(item, 'child', childAge(kid, character.age));
+      const said = giftResult(reaction, 'She', name);
+      const children = (character.children ?? []).map((k) =>
+        k.id === id
+          ? { ...k, bond: Math.max(10, Math.min(100, k.bond + GIFT_BOND.family[reaction])) }
+          : k,
+      );
+      belongings.splice(index, 1);
+      const c: Character = {
+        ...character,
+        children,
+        belongings,
+        stats: clampStats({ ...character.stats, happiness: character.stats.happiness + GIFT_HAPPINESS[reaction] }),
+        log: [...character.log, { age: character.age, year: character.birthYear + character.age, text: `You gave the ${name} to ${ref}.${said.journal}`, kind: 'event' } as LogEntry],
+      };
+      persist(c, 'playing');
+      set({ character: c, section: null, notice: { title: said.title, eyebrow: cap(ref), text: said.notice } });
       return;
     }
 
@@ -6116,7 +6361,7 @@ text: partingLine(me.name, me.kind),
       return;
     }
     persist(c, 'playing');
-    set({ character: c, section: null, notice: { title: 'Given', eyebrow: cap(ref), text: said.notice } });
+    set({ character: c, section: null, notice: { title: said.title, eyebrow: cap(ref), text: said.notice } });
   },
 
   eatItem: (index) => {
@@ -6262,7 +6507,9 @@ text: partingLine(me.name, me.kind),
     if (!character || !character.alive) return;
     if (get().activeEvent) return;
     const book = BOOKS.find((b) => b.id === bookId);
-    if (!book || !eligibleBooks(character).some((b) => b.id === bookId)) return;
+    // an event may hand you a book outside the shelf's age gate —
+    // finishing what you are already reading always counts
+    if (!book) return;
     const lib = ACTIVITIES.find((a) => a.key === 'library');
     if (!lib || !isOpen(lib, character)) return;
 
@@ -6382,6 +6629,23 @@ text: partingLine(me.name, me.kind),
       });
       return;
     }
+    // some posts ask for higher study without naming the field
+    if (job.requiresAnyDegree && (character.degrees ?? []).length === 0) {
+      set({
+        section: null,
+        notice: { title: job.title, eyebrow: 'Work', text: 'They wanted to see higher study.' },
+      });
+      return;
+    }
+    // creative posts need the course certificate first; it stacks
+    // with every other requirement on the post
+    if (job.requiresCertificate && !(character.certificates ?? []).includes(job.requiresCertificate)) {
+      set({
+        section: null,
+        notice: { title: job.title, eyebrow: 'Work', text: `They wanted to see a ${certificateName(job.requiresCertificate).toLowerCase()}.` },
+      });
+      return;
+    }
     // posts on wheels need the wheels first
     if (job.requiresVehicle && !ownsVehicle(character)) {
       set({
@@ -6455,6 +6719,13 @@ text: partingLine(me.name, me.kind),
   study: () => {
     const { character } = get();
     if (!character || !character.alive || !character.schoolId) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Study', eyebrow: 'War', text: 'There is a war on. That will have to wait.' },
+      });
+      return;
+    }
     const school = schoolName(character);
     // in poor health the mind only takes so much; you may still sit
     // down and study, but past the cap it costs more than it gives
@@ -6474,7 +6745,7 @@ text: partingLine(me.name, me.kind),
         ...character.stats,
         smarts: character.stats.smarts + (gain ? 5 : 1),
         health: character.stats.health - (gain ? 0 : 1),
-        energy: (character.stats.energy ?? 70) - (gain ? 2 : 6),
+        energy: (character.stats.energy ?? 70) - (gain ? 1 : 4),
       }),
       performance: clampPerformance(character.performance + (gain ? 12 : 3)),
       studiesThisYear: character.studiesThisYear + 1,
@@ -6497,6 +6768,13 @@ text: partingLine(me.name, me.kind),
   workHarder: () => {
     const { character } = get();
     if (!character || !character.alive || !character.jobId) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Work', eyebrow: 'War', text: 'There is a war on. That will have to wait.' },
+      });
+      return;
+    }
     const title = jobTitle(character);
     const cap = shiftCap(Math.min(character.stats.health, character.stats.energy ?? 70));
     const gain = character.shiftsThisYear < cap;
@@ -6514,8 +6792,8 @@ text: partingLine(me.name, me.kind),
       ...character,
       stats: clampStats({
         ...character.stats,
-        health: character.stats.health - (gain ? 1 : 7) - (double ? 2 : 0),
-        energy: (character.stats.energy ?? 70) - (gain ? 4 : 7) - (double ? 2 : 0),
+        health: character.stats.health - (gain ? 1 : 5) - (double ? 2 : 0),
+        energy: (character.stats.energy ?? 70) - (gain ? 3 : 5) - (double ? 2 : 0),
         happiness: character.stats.happiness - (gain ? 2 : 4) - (double ? 3 : 0),
       }),
       performance: clampPerformance(character.performance + (gain ? 15 : 3)),
@@ -6541,6 +6819,13 @@ text: partingLine(me.name, me.kind),
   quitJob: () => {
     const { character } = get();
     if (!character || !character.alive || !character.jobId) return;
+    if (character.serving) {
+      set({
+        section: null,
+        notice: { title: 'Work', eyebrow: 'War', text: 'There is a war on. That will have to wait.' },
+      });
+      return;
+    }
     const title = jobTitle(character);
     const entry: LogEntry = {
       age: character.age,

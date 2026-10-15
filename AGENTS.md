@@ -265,6 +265,19 @@ This applies to every screen: creation, game, journal, death.
   only walks, quiet sitting and the doctor (`availableActivities`
   filters to `walk`/`meditate` when serving; shops, licence and
   identity hide too).
+- Courses are the teachable subset of activities: any row with a
+  `course` marker (`cert` + `certName`) leaves the Actions menu and
+  lives under the Courses button (`coursesFor` in
+  `src/engine/activities.ts`, `CourseBody` in `SectionModal.tsx`).
+  Sessions count against a yearly cap (`coursesThisYear`,
+  `COURSES_PER_YEAR`, refilled in `careerStep`; past it lessons
+  barely land and cost energy), and reaching 100 skill awards the
+  `cert` into `certificates` on the character. Creative posts gate on
+  it via   `requiresCertificate` on `JobTier` (checked in
+  `jobsInSector`, `requestInterview` and promotion, like
+  `requiresVehicle`, and shown in the post view) — stack it with
+  degrees, vehicles and smarts freely. `requiresAnyDegree` takes any
+  higher study without naming the field (same three checkpoints).
 - Walks are their own little system: clicking the walk row opens a
   chooser (length + destination dropdowns) rather than firing at
   once. `src/data/walks.ts` holds `WALK_DURATIONS` (stat scale, habit

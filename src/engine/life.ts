@@ -89,3 +89,42 @@ export function epitaph(c: Character): string {
   if (s.happiness > 70) return 'Remembered with deep joy and affection.';
   return 'An ordinary life, which is to say: an extraordinary one.';
 }
+
+/** A life as plain text: header, epitaph, then the journal by age. */
+export function lifeAsText(c: Character): string {
+  const era = getEra(c.eraId);
+  const lines = [
+    `${c.name} — ${era.name}, age ${c.age}${c.alive ? '' : ` — died: ${c.causeOfDeath ?? 'old age'}`}`,
+    `“${epitaph(c)}”`,
+    '',
+  ];
+  let lastAge = -1;
+  for (const e of c.log) {
+    if (e.age !== lastAge) {
+      lines.push(`Age ${e.age} · ${e.year}`);
+      lastAge = e.age;
+    }
+    lines.push(e.text);
+  }
+  return lines.join('\n');
+}
+
+/** Download the life as a file: JSON with character + text journal. */
+export function downloadLife(c: Character): void {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    character: c,
+    journal: lifeAsText(c),
+    epitaph: epitaph(c),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safe = c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'life';
+  a.href = url;
+  a.download = `ananta-${safe}-age-${c.age}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

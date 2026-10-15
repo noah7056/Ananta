@@ -288,4 +288,5 @@ export const SHOP_ITEMS: ShopItemDef[] = [
 
   // issued, never sold
   { id: 'service-rifle', shopId: 'army', text: 'Service rifle', journal: 'You were issued a rifle.', notice: 'Oiled, numbered, yours.', cost: 0 },
+  { id: 'army-rations', shopId: 'army', text: 'Army rations', journal: 'You drew your ration packs.', notice: 'Hard tack, salt pork, and tea.', cost: 0, sates: 30 },
 ];
